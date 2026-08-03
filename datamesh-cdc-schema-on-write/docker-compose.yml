@@ -45,47 +45,61 @@ services:
     networks:
       - datamesh
 
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
-    ports:
-      - "2181:2181"
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-    networks:
-      - datamesh
-
   kafka:
     image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    hostname: kafka
     ports:
       - "9092:9092"
       - "29092:29092"
+      - "9093:9093"
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:29092,PLAINTEXT_HOST://:9092,CONTROLLER://:9093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-    depends_on:
-      - zookeeper
+      CLUSTER_ID: datamesh-cluster-1
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "kafka:29092"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
     networks:
       - datamesh
 
   schema-registry:
     image: confluentinc/cp-schema-registry:7.5.0
+    container_name: schema-registry
     ports:
       - "8081:8081"
     environment:
       SCHEMA_REGISTRY_HOST_NAME: schema-registry
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:29092
       SCHEMA_REGISTRY_AVRO_COMPATIBILITY_LEVEL: "BACKWARD"
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - datamesh
 
   kafka-connect:
     image: debezium/connect:2.5
+    container_name: kafka-connect
     ports:
       - "8083:8083"
     environment:
@@ -98,14 +112,25 @@ services:
       VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
       KEY_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
       VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CONNECT_PLUGIN_PATH: /kafka/connect,/kafka/connect/debezium-connector-postgres
+    volumes:
+      - ./debezium/connectors:/kafka/connect/debezium-connector-postgres:ro
     depends_on:
-      - kafka
-      - schema-registry
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/connectors"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - datamesh
 
   minio:
     image: minio/minio:RELEASE.2024-01-13T07-53-03Z
+    container_name: minio
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -115,11 +140,17 @@ services:
     volumes:
       - minio_data:/data
     command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - datamesh
 
   iceberg-rest:
     image: tabulario/iceberg-rest:latest
+    container_name: iceberg-rest
     ports:
       - "8181:8181"
     environment:
@@ -130,23 +161,27 @@ services:
       CATALOG_S3_SECRET_ACCESS_KEY: minio123
       CATALOG_S3_PATH_STYLE_ACCESS: "true"
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
     networks:
       - datamesh
 
   trino:
     image: trinodb/trino:431
+    container_name: trino
     ports:
       - "8080:8080"
     volumes:
       - ./trino/catalog:/etc/trino/catalog:ro
     depends_on:
       - iceberg-rest
+      - minio
     networks:
       - datamesh
 
   prometheus:
     image: prom/prometheus:v2.48.0
+    container_name: prometheus
     ports:
       - "9090:9090"
     volumes:
@@ -156,19 +191,26 @@ services:
 
   grafana:
     image: grafana/grafana:10.2.3
+    container_name: grafana
     ports:
       - "3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+    depends_on:
+      - prometheus
     networks:
       - datamesh
 
   schema-evolution-service:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: schema-evolution-service
     command: python -m src.datamesh_cdc.schema_evolution_service
     environment:
       SCHEMA_REGISTRY_URL: http://schema-registry:8081
@@ -180,8 +222,10 @@ services:
     volumes:
       - ./src:/app/src:ro
     depends_on:
-      - schema-registry
-      - kafka-connect
+      schema-registry:
+        condition: service_healthy
+      kafka-connect:
+        condition: service_healthy
     networks:
       - datamesh
 
@@ -194,3 +238,4 @@ volumes:
 networks:
   datamesh:
     driver: bridge
+    name: datamesh
