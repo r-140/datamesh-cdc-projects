@@ -22,7 +22,15 @@ format: ## Format code
 	ruff check --fix src/ tests/
 
 up: ## Start infrastructure
-	docker compose up -d
+	docker compose down -v --remove-orphans
+	docker rm -f minio kafka postgres-customers postgres-orders prometheus grafana trino iceberg-rest schema-registry kafka-connect schema-evolution-service 2>/dev/null || true
+	docker compose up -d --build
+	@echo "Waiting for services to start..."
+	@sleep 20
+	@./scripts/setup-connectors.sh || true
+
+connectors: ## Register/update connectors
+	./scripts/setup-connectors.sh
 
 down: ## Stop all services
 	docker compose down -v
