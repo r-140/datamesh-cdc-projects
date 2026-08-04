@@ -15,6 +15,8 @@ from datetime import datetime
 import requests
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.error import SchemaRegistryError
+from confluent_kafka.schema_registry import Schema
+# УДАЛИТЬ: from confluent_kafka.schema_registry import SchemaType
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +71,8 @@ class SchemaEvolutionManager:
     def register_schema(self, subject: str, schema: dict) -> int:
         schema_str = json.dumps(schema)
         try:
-            schema_id = self.sr_client.register_schema(subject, schema_str)
+            schema_obj = Schema(schema_str, schema_type='AVRO')
+            schema_id = self.sr_client.register_schema(subject, schema_obj)
             logger.info(f"Schema registered: {subject} -> ID {schema_id}")
             return schema_id
         except SchemaRegistryError as e:

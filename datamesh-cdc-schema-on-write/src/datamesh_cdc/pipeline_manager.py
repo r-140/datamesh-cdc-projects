@@ -28,7 +28,8 @@ class PipelineManager:
                         consumed_fields: Optional[List[str]] = None,
                         owner_email: str = "", alert_webhook: Optional[str] = None) -> DataMeshPipeline:
         if pipeline_id in self.pipelines:
-            raise ValueError(f"Pipeline {pipeline_id} already exists")
+            logger.info(f"Pipeline {pipeline_id} already exists, skipping")
+            return self.pipelines[pipeline_id]
         config = PipelineConfig(
             pipeline_id=pipeline_id, source_topic=source_topic, sink_table=sink_table,
             domain=domain, opt_in_schema_evolution=opt_in_schema_evolution,
@@ -86,7 +87,7 @@ class PipelineManager:
                 "config": asdict(pipe.config), "state": pipe.state,
                 "history": pipe._schema_version_history
             }
-        self.state_file.write_text(json.dumps(state, indent=2))
+        self.state_file.write_text(json.dumps(state, indent=2, default=lambda o: o.value if hasattr(o, 'value') else str(o)))
 
     def _load_state(self):
         try:

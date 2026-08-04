@@ -35,7 +35,12 @@ connectors: ## Register/update connectors
 down: ## Stop all services
 	docker compose down -v
 
-simulate: ## Run schema evolution simulation
+simulate: ## Run simulation
+	rm -f state.json
+	curl -X DELETE http://localhost:8081/subjects/orders-server.public.orders-value || true
+	curl -X DELETE http://localhost:8081/subjects/orders-server.public.orders-key || true
+	curl -X DELETE http://localhost:8081/subjects/customers-server.public.customers-value || true
+	curl -X DELETE http://localhost:8081/subjects/customers-server.public.customers-key || true
 	python -m src.datamesh_cdc.schema_evolution_service --simulate
 
 clean: ## Clean up

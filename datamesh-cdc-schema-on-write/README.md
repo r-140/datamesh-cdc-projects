@@ -28,15 +28,18 @@ PostgreSQL (Domain)
 ## Quick Start
 
 ```bash
-# Install
+# 1. Install
 python3 -m venv venv
-source venv/bin/activate 
+source venv/bin/activate
 pip install -e ".[dev]"
 
-# Start infrastructure
+# 2. Start all infrastructure (cleans old containers automatically)
 make up
 
-# Run simulation
+# 3. Register Debezium connectors (after services are healthy)
+./scripts/setup-connectors.sh
+
+# 4. Run simulation
 make simulate
 ```
 
