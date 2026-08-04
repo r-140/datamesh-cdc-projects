@@ -82,10 +82,44 @@ def _check_all_pipelines(manager):
 
 def simulate():
     manager = PipelineManager(schema_registry_url="http://localhost:8081", state_file="/tmp/datamesh_simulate.json")
-    _create_demo_pipelines(manager)
+
+    # Clean simulation subjects (ignore errors if not exist)
+    import requests
+    for subject in ["sim.orders-value", "sim.customers-value"]:
+        try:
+            requests.delete(f"http://localhost:8081/subjects/{subject}?permanent=true")
+        except Exception:
+            pass
+
+    # Create simulation pipelines with unique topics
+    try:
+        manager.create_pipeline(
+            pipeline_id="orders-to-analytics", source_topic="sim.orders",
+            sink_table="raw.orders", domain="orders", opt_in_schema_evolution=True,
+            owner_email="orders-team@example.com", alert_webhook="http://alerts.example.com/webhook"
+        )
+    except ValueError:
+        logger.info("Pipeline orders-to-analytics already exists")
+    try:
+        manager.create_pipeline(
+            pipeline_id="orders-to-reporting", source_topic="sim.orders",
+            sink_table="reporting.orders_summary", domain="orders", opt_in_schema_evolution=False,
+            consumed_fields=["id", "customer_id", "total_amount", "status"],
+            owner_email="reporting-team@example.com"
+        )
+    except ValueError:
+        logger.info("Pipeline orders-to-reporting already exists")
+    try:
+        manager.create_pipeline(
+            pipeline_id="customers-to-analytics", source_topic="sim.customers",
+            sink_table="raw.customers", domain="customers", opt_in_schema_evolution=True,
+            owner_email="customers-team@example.com"
+        )
+    except ValueError:
+        logger.info("Pipeline customers-to-analytics already exists")
 
     schema_v1 = {
-        "type": "record", "name": "Order",
+        "type": "record", "name": "Order", "namespace": "sim.orders",
         "fields": [
             {"name": "id", "type": "long"},
             {"name": "customer_id", "type": "long"},
@@ -94,7 +128,7 @@ def simulate():
         ]
     }
     schema_v2 = {
-        "type": "record", "name": "Order",
+        "type": "record", "name": "Order", "namespace": "sim.orders",
         "fields": [
             {"name": "id", "type": "long"},
             {"name": "customer_id", "type": "long"},
@@ -104,7 +138,7 @@ def simulate():
         ]
     }
     schema_v3 = {
-        "type": "record", "name": "Order",
+        "type": "record", "name": "Order", "namespace": "sim.orders",
         "fields": [
             {"name": "id", "type": "long"},
             {"name": "customer_id", "type": "long"},
