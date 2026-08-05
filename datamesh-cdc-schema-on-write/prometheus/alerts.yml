@@ -1,0 +1,54 @@
+groups:
+  - name: schema_evolution
+    interval: 30s
+    rules:
+      - alert: SchemaCompatibilityFailed
+        expr: kafka_schema_registry_compatibility_checks_failed > 0
+        for: 1m
+        labels:
+          severity: critical
+          team: data-platform
+        annotations:
+          summary: "Schema Registry rejected incompatible schema"
+          description: "Subject {{ $labels.subject }} failed compatibility check. Breaking change detected!"
+          runbook_url: "https://wiki.internal/datamesh/schema-break-runbook"
+
+      - alert: ConnectorTaskFailed
+        expr: kafka_connect_source_task_record_error_rate > 0
+        for: 2m
+        labels:
+          severity: warning
+          team: data-platform
+        annotations:
+          summary: "Kafka Connect task has errors"
+          description: "Connector {{ $labels.connector }} task {{ $labels.task }} error rate: {{ $value }}"
+
+      - alert: PipelinePaused
+        expr: pipeline_status{status="PAUSED"} == 1
+        for: 0s
+        labels:
+          severity: warning
+          team: data-domain
+        annotations:
+          summary: "Pipeline {{ $labels.pipeline_id }} is PAUSED"
+          description: "Domain: {{ $labels.domain }}. Reason: {{ $labels.reason }}"
+
+      - alert: HighNullRate
+        expr: avg by (column, table) (null_rate) > 50
+        for: 5m
+        labels:
+          severity: warning
+          team: data-quality
+        annotations:
+          summary: "High null rate detected"
+          description: "Column {{ $labels.column }} in {{ $labels.table }} has {{ $value }}% nulls"
+
+      - alert: SchemaVersionSpike
+        expr: increase(kafka_schema_registry_registered_count[1h]) > 2
+        for: 0s
+        labels:
+          severity: info
+          team: data-platform
+        annotations:
+          summary: "Multiple schema versions registered in 1 hour"
+          description: "Subject {{ $labels.subject }}: {{ $value }} new versions. Check for rapid schema changes."

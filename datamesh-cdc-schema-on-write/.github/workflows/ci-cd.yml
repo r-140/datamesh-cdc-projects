@@ -1,4 +1,4 @@
-name: Schema-on-Write CI/CD
+name: CI/CD Pipeline
 
 on:
   push:
@@ -7,122 +7,242 @@ on:
     branches: [main]
 
 env:
-  PYTHON_VERSION: "3.11"
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  PYTHON_VERSION: "3.12"
+  POETRY_VERSION: "1.7.1"
 
 jobs:
+  # ------------------------------------------------------------------
+  # 1. Lint & Format
+  # ------------------------------------------------------------------
   lint:
-    name: Lint & Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - run: |
-          pip install ruff black mypy
-          ruff check src/ tests/
-          black --check src/ tests/
-          mypy src/ --ignore-missing-imports
 
-  unit-tests:
-    name: Unit Tests
+      - name: Install dependencies
+        run: |
+          pip install ruff black mypy
+
+      - name: Run ruff
+        run: ruff check src/ tests/
+
+      - name: Run black
+        run: black --check src/ tests/
+
+      - name: Run mypy
+        run: mypy src/
+
+  # ------------------------------------------------------------------
+  # 2. Unit Tests
+  # ------------------------------------------------------------------
+  test:
     runs-on: ubuntu-latest
     needs: lint
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - run: |
+
+      - name: Install dependencies
+        run: |
           pip install -e ".[dev]"
-          pytest tests/ -v --cov=src/datamesh_cdc --cov-report=xml -m "not integration"
-      - uses: codecov/codecov-action@v3
+
+      - name: Run pytest
+        run: pytest tests/ -v --cov=src --cov-report=xml
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
         with:
           files: ./coverage.xml
-          fail_ci_if_error: false
 
+  # ------------------------------------------------------------------
+  # 3. Schema Compatibility Check
+  # ------------------------------------------------------------------
   schema-compat:
-    name: Schema Compatibility Checks
     runs-on: ubuntu-latest
-    needs: lint
+    needs: test
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+
+      - name: Start Schema Registry
+        run: |
+          docker run -d --name schema-registry \
+            -p 8081:8081 \
+            confluentinc/cp-schema-registry:7.5.3 \
+            bash -c "schema-registry-start"
+          sleep 10
+
+      - name: Check schema compatibility
+        run: |
+          python scripts/check_schema_compat.py \
+            --registry http://localhost:8081 \
+            --schemas schemas/
+
+      - name: Cleanup
+        run: docker rm -f schema-registry
+
+  # ------------------------------------------------------------------
+  # 4. Integration Tests (Docker Compose)
+  # ------------------------------------------------------------------
+  integration:
+    runs-on: ubuntu-latest
+    needs: schema-compat
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and start infrastructure
+        run: |
+          make up
+          sleep 30
+
+      - name: Register connectors
+        run: ./scripts/setup-connectors.sh
+
+      - name: Run end-to-end demo
+        run: python scripts/run_demo.py
+
+      - name: Run schema evolution simulator
+        run: python scripts/schema_evolution_simulator.py
+
+      - name: Check connector health
+        run: |
+          curl -f http://localhost:8083/connectors/orders-cdc-connector/status
+          curl -f http://localhost:8081/subjects
+
+      - name: Cleanup
+        run: make down
+
+  # ------------------------------------------------------------------
+  # 5. dbt Tests
+  # ------------------------------------------------------------------
+  dbt-test:
+    runs-on: ubuntu-latest
+    needs: integration
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - run: |
-          pip install -e ".[dev]"
-          python -m src.datamesh_cdc.schema_evolution_service --simulate
 
-  integration-tests:
-    name: Integration Tests
+      - name: Install dbt-trino
+        run: pip install dbt-trino
+
+      - name: Start Trino
+        run: |
+          docker run -d --name trino \
+            -p 8080:8080 \
+            trinodb/trino:431
+          sleep 20
+
+      - name: Run dbt
+        run: |
+          cd dbt_datamesh
+          dbt deps
+          dbt compile
+          dbt test  # Tests catch schema breaks!
+
+      - name: Cleanup
+        run: docker rm -f trino
+
+  # ------------------------------------------------------------------
+  # 6. Security Scan
+  # ------------------------------------------------------------------
+  security:
     runs-on: ubuntu-latest
-    needs: [unit-tests, schema-compat]
+    needs: test
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - run: |
-          docker compose up -d postgres-orders postgres-customers zookeeper kafka schema-registry minio iceberg-rest
-          sleep 30
-      - run: |
-          pip install -e ".[dev]"
-          pytest tests/ -v -m integration --timeout=300
-      - if: failure()
-        run: docker compose logs > docker-logs.txt
-      - if: failure()
-        uses: actions/upload-artifact@v3
-        with:
-          name: docker-logs
-          path: docker-logs.txt
-      - if: always()
-        run: docker compose down -v
 
-  build-push:
-    name: Build & Push
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # ------------------------------------------------------------------
+  # 7. Build & Push Docker Images
+  # ------------------------------------------------------------------
+  build:
     runs-on: ubuntu-latest
-    needs: [unit-tests, schema-compat]
+    needs: [integration, dbt-test, security]
     if: github.ref == 'refs/heads/main'
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/metadata-action@v5
-        id: meta
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=sha,format=short
-      - uses: docker/build-push-action@v5
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push schema-evolution-service
+        uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/datamesh-schema-evolution:${{ github.sha }}
+            ${{ secrets.DOCKER_USERNAME }}/datamesh-schema-evolution:latest
 
-  security-scan:
-    name: Security Scan
+      - name: Build and push kafka-connect
+        uses: docker/build-push-action@v5
+        with:
+          context: ./kafka-connect
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/datamesh-kafka-connect:${{ github.sha }}
+            ${{ secrets.DOCKER_USERNAME }}/datamesh-kafka-connect:latest
+
+  # ------------------------------------------------------------------
+  # 8. Deploy to Staging
+  # ------------------------------------------------------------------
+  deploy-staging:
     runs-on: ubuntu-latest
-    needs: build-push
+    needs: build
+    environment: staging
     steps:
       - uses: actions/checkout@v4
-      - uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-      - uses: github/codeql-action/upload-sarif@v2
-        with:
-          sarif_file: 'trivy-results.sarif'
+
+      - name: Deploy to staging
+        run: |
+          echo "Deploying to staging..."
+          # kubectl apply -f k8s/staging/
+          # helm upgrade --install datamesh ./helm-chart
+
+  # ------------------------------------------------------------------
+  # 9. Deploy to Production (manual approval)
+  # ------------------------------------------------------------------
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    environment: production  # Requires manual approval in GitHub
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to production
+        run: |
+          echo "Deploying to production..."
+          # kubectl apply -f k8s/production/

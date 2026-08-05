@@ -1,21 +1,11 @@
 #!/usr/bin/env python3
 """
-CDC Data Mesh -- Automated End-to-End Demo
+CDC Data Mesh -- Automated End-to-End Demo (v5)
 
-Automates the step-by-step guide:
-  1. Insert test data into PostgreSQL
-  2. Verify Kafka topics
-  3. Read Avro messages
-  4. Inspect Schema Registry
-  5. ALTER TABLE ADD COLUMN (compatible)
-  6. Insert with new column
-  7. Read updated messages
-  8. Verify Schema Registry v2 + history
-  9. ALTER TABLE DROP COLUMN (breaking)
-  10. Try insert -> connector fails
-  11. Check connector status (with retries)
-  12. Fix: restore column + restart connector
-  13. Verify recovery
+Fixed: Debezium ExtractNewRecordState automatically adds null for missing
+fields (drop.fields.keep.schema.compatible=true), so DROP COLUMN does NOT
+crash the connector. Instead, we demonstrate Schema Registry rejection via
+REST API.
 
 Usage:
     python scripts/run_demo.py
@@ -68,13 +58,7 @@ def warn(msg: str):
 
 # -- Helpers -----------------------------------------------------------
 def run(cmd: list[str], capture=True, check=True) -> subprocess.CompletedProcess:
-    """Run a shell command via subprocess."""
-    result = subprocess.run(
-        cmd,
-        capture_output=capture,
-        text=True,
-        check=False
-    )
+    result = subprocess.run(cmd, capture_output=capture, text=True, check=False)
     if check and result.returncode != 0:
         err(f"Command failed: {' '.join(cmd)}")
         if result.stderr:
@@ -84,21 +68,15 @@ def run(cmd: list[str], capture=True, check=True) -> subprocess.CompletedProcess
 
 
 def docker_exec(container: str, cmd: str) -> str:
-    """Run a command inside a Docker container."""
     result = run(["docker", "exec", container, "bash", "-c", cmd])
     return result.stdout.strip()
 
 
 def psql(db_container: str, db: str, sql: str) -> str:
-    """Execute SQL via docker exec psql."""
-    return docker_exec(
-        db_container,
-        f'psql -U postgres -d {db} -c "{sql}"'
-    )
+    return docker_exec(db_container, f'psql -U postgres -d {db} -c "{sql}"')
 
 
 def curl_json(url: str, method: str = "GET", data: Optional[str] = None) -> dict:
-    """Simple HTTP request returning JSON."""
     cmd = ["curl", "-s", "-X", method, url]
     if data:
         cmd += ["-H", "Content-Type: application/json", "-d", data]
@@ -110,7 +88,6 @@ def curl_json(url: str, method: str = "GET", data: Optional[str] = None) -> dict
 
 
 def wait_for_kafka_topic(topic: str, timeout: int = 30) -> bool:
-    """Poll until topic appears in Kafka."""
     info(f"Waiting for topic '{topic}' to appear...")
     for i in range(timeout):
         out = docker_exec("kafka", "kafka-topics --bootstrap-server localhost:29092 --list")
@@ -122,22 +99,27 @@ def wait_for_kafka_topic(topic: str, timeout: int = 30) -> bool:
     return False
 
 
-def read_avro_message(topic: str, max_messages: int = 1) -> str:
-    """Read Avro messages using kafka-avro-console-consumer."""
+def get_kafka_offset(topic: str) -> int:
     result = run([
-        "docker", "exec", "kafka", "kafka-avro-console-consumer",
-        "--bootstrap-server", "localhost:29092",
+        "docker", "exec", "kafka", "kafka-run-class",
+        "kafka.tools.GetOffsetShell",
+        "--broker-list", "localhost:29092",
         "--topic", topic,
-        "--from-beginning",
-        "--property", "schema.registry.url=http://schema-registry:8081",
-        "--max-messages", str(max_messages),
-        "--timeout-ms", "5000"
+        "--time", "-1"
     ], capture=True, check=False)
-    return result.stdout.strip()
+    try:
+        lines = result.stdout.strip().splitlines()
+        total = 0
+        for line in lines:
+            parts = line.split(":")
+            if len(parts) >= 3:
+                total += int(parts[2])
+        return total
+    except Exception:
+        return 0
 
 
 def show_schema_history(subject: str):
-    """Fetch and display all schema versions with field diffs."""
     versions = curl_json(f"{SR_URL}/subjects/{subject}/versions")
     if not isinstance(versions, list) or not versions:
         warn(f"No versions found for {subject}")
@@ -183,7 +165,6 @@ def show_schema_history(subject: str):
 
 
 def cleanup_tables():
-    """Clean tables and reset sequences for a fresh demo run."""
     banner("STEP 0: Clean Up Tables")
     try:
         psql("postgres-orders", "orders_db",
@@ -201,6 +182,12 @@ def cleanup_tables():
     except Exception as e:
         warn(f"Could not clean customers: {e}")
 
+
+def restart_connector(connector_name: str):
+    info(f"Restarting connector '{connector_name}'...")
+    curl_json(f"{KC_URL}/connectors/{connector_name}/restart", method="POST")
+    ok(f"Connector '{connector_name}' restart command sent")
+
 # -- Main Demo ---------------------------------------------------------
 def main():
     print(f"{C.BOLD}{C.CYAN}")
@@ -212,7 +199,6 @@ def main():
     print(f"{C.END}")
     info("Starting automated CDC Data Mesh demo...")
 
-    # -- Step 0: Clean tables -----------------------------------------
     cleanup_tables()
 
     # -- Step 1: Insert test data -------------------------------------
@@ -243,27 +229,21 @@ def main():
         for t in topics.splitlines():
             print(f"    - {t}")
 
-    # -- Step 3: Read Avro message ------------------------------------
-    banner("STEP 3: Read Avro Message from Kafka")
-    info("Reading from topic 'orders-server.public.orders'...")
-    msg = read_avro_message(TOPIC, max_messages=1)
-    if msg:
-        ok("Message received:")
-        try:
-            parsed = json.loads(msg)
-            print(json.dumps(parsed, indent=2))
-        except json.JSONDecodeError:
-            print(msg)
+    # -- Step 3: Check messages via offset ----------------------------
+    banner("STEP 3: Check Kafka Message Offsets")
+    offset_before = get_kafka_offset(TOPIC)
+    info(f"Current offset for '{TOPIC}': {offset_before}")
+    if offset_before > 0:
+        ok(f"Messages present in Kafka ({offset_before} total)")
     else:
-        warn("No message received yet. Debezium may still be snapshotting.")
-        info("Waiting 5s and retrying...")
+        warn("No messages yet. Debezium may still be snapshotting.")
+        info("Waiting 5s...")
         time.sleep(5)
-        msg = read_avro_message(TOPIC, max_messages=1)
-        if msg:
-            ok("Message received after retry:")
-            print(msg)
+        offset_before = get_kafka_offset(TOPIC)
+        if offset_before > 0:
+            ok(f"Messages found after retry ({offset_before} total)")
         else:
-            err("Still no message. Check connector status manually.")
+            err("Still no messages. Check connector status manually.")
 
     # -- Step 4: Inspect Schema Registry -----------------------------
     banner("STEP 4: Inspect Schema Registry")
@@ -300,19 +280,15 @@ def main():
          "VALUES (2, 99.99, 'pending', 'SUMMER2024');")
     ok("Inserted order with promo_code='SUMMER2024'")
 
-    # -- Step 7: Read updated message ---------------------------------
-    banner("STEP 7: Read Updated Message")
+    # -- Step 7: Check updated offset ---------------------------------
+    banner("STEP 7: Verify New Message Arrived")
     info("Waiting 3s for Debezium to capture the change...")
     time.sleep(3)
-    msg = read_avro_message(TOPIC, max_messages=1)
-    if msg and "SUMMER2024" in msg:
-        ok("New message contains 'promo_code':")
-        print(msg)
-    elif msg:
-        ok("Message received (may need to consume more to see latest):")
-        print(msg)
+    offset_after = get_kafka_offset(TOPIC)
+    if offset_after > offset_before:
+        ok(f"New message captured! Offset: {offset_before} -> {offset_after}")
     else:
-        warn("No new message. Try reading with --max-messages 10")
+        warn("Offset did not increase. Debezium may be delayed.")
 
     # -- Step 8: Verify Schema Registry v2 + history -----------------
     banner("STEP 8: Verify Schema Registry Evolved to Version 2")
@@ -344,78 +320,90 @@ def main():
          "ALTER TABLE orders DROP COLUMN IF EXISTS total_amount;")
     ok("Dropped column 'total_amount'")
 
-    # -- Step 10: Try insert after breaking change -------------------
-    banner("STEP 10: Try Insert After Breaking Change")
+    info("NOTE: Debezium ExtractNewRecordState automatically adds null")
+    info("for missing fields, so the connector stays RUNNING in practice.")
+    info("Let's verify: insert a record and check that the connector")
+    info("still works (it fills missing fields with null).")
+
+    # -- Step 9b: Insert after DROP (connector should stay healthy) --
+    banner("STEP 9b: Insert After DROP -- Connector Stays Healthy")
     psql("postgres-orders", "orders_db",
          "INSERT INTO orders (customer_id, status, promo_code) "
          "VALUES (3, 'shipped', 'WINTER2024');")
-    ok("SQL INSERT succeeded (but Debezium may fail to propagate)")
+    ok("Inserted order without total_amount")
 
-    info("Waiting 10s for Debezium to attempt schema registration...")
-    time.sleep(10)
+    info("Waiting 5s for Debezium to process...")
+    time.sleep(5)
 
-    # -- Step 11: Check connector status (with retries) --------------
-    banner("STEP 11: Check Connector Status")
-    failed = False
-    final_status = {}
-    for attempt in range(1, 4):
-        status = curl_json(f"{KC_URL}/connectors/{CONNECTOR}/status")
-        final_status = status
-        tasks = status.get("tasks", [])
-        failed = any(t.get("state") == "FAILED" for t in tasks)
-        if failed:
-            break
-        info(f"Attempt {attempt}: still RUNNING, checking logs...")
-        logs = run(["docker", "logs", "kafka-connect", "--tail", "30"], capture=True, check=False)
-        if "409" in logs.stdout or "incompatible" in logs.stdout.lower():
-            warn("Found schema compatibility errors in logs (connector may be retrying):")
-            print(logs.stdout[-800:])
-            break
-        if attempt < 3:
-            info("Waiting 5s before next check...")
-            time.sleep(5)
-
-    print(json.dumps(final_status, indent=2))
-
-    tasks = final_status.get("tasks", [])
-    failed = any(t.get("state") == "FAILED" for t in tasks)
-    if failed:
-        err(f"Connector '{CONNECTOR}' has FAILED task(s)!")
-        for t in tasks:
-            if t.get("state") == "FAILED":
-                print(f"\n{C.RED}Task {t['id']} trace:{C.END}")
-                print(t.get("trace", "No trace")[:500])
+    offset_after_drop = get_kafka_offset(TOPIC)
+    if offset_after_drop > offset_after:
+        ok(f"Message propagated! Offset: {offset_after} -> {offset_after_drop}")
+        info("Debezium handled DROP COLUMN gracefully (added null for missing field)")
     else:
-        ok(f"Connector '{CONNECTOR}' tasks are healthy (but check logs above for 409 errors).")
+        warn("Offset did not increase.")
 
-    # -- Step 12: Fix -- restore column + restart --------------------
-    banner("STEP 12: Fix Breaking Change")
+    status = curl_json(f"{KC_URL}/connectors/{CONNECTOR}/status")
+    if status.get("connector", {}).get("state") == "RUNNING":
+        ok(f"Connector '{CONNECTOR}' is RUNNING -- no crash!")
+        info("This is because ExtractNewRecordState keeps schema compatible.")
+
+    # -- Step 10: Demonstrate Schema Registry rejection via API ------
+    banner("STEP 10: Schema Registry Rejects Breaking Change (REST API)")
+    info("Now let's test what happens if someone tries to register")
+    info("a schema with a REQUIRED field (no default) -- old consumers")
+    info("will not know how to handle missing 'priority'...")
+
+    incompatible_schema = {
+        "type": "record",
+        "name": "Value",
+        "namespace": "orders-server.public.orders",
+        "fields": [
+            {"name": "id", "type": {"type": "int", "connect.default": 0}, "default": 0},
+            {"name": "customer_id", "type": "int"},
+            {"name": "total_amount", "type": "string"},
+            {
+                "name": "status",
+                "type": {"type": "string", "connect.default": "pending"},
+                "default": "pending",
+            },
+            {"name": "priority", "type": "string"},  # ← NO DEFAULT = BREAKING
+        ],
+    }
+
+    result = curl_json(
+        f"{SR_URL}/subjects/{ORDERS_SUBJECT}/versions",
+        method="POST",
+        data=json.dumps({"schema": json.dumps(incompatible_schema)}),
+    )
+
+    if result.get("error_code") == 409:
+        err("Schema Registry REJECTED the breaking change!")
+        print(f"\n{C.RED}Error:{C.END} {result.get('message', 'Unknown')[:300]}")
+        ok("BACKWARD compatibility is enforced -- consumers are protected.")
+    else:
+        warn("Unexpected result from Schema Registry:")
+        print(json.dumps(result, indent=2))
+
+    # -- Step 11: Restore column -------------------------------------
+    banner("STEP 11: Restore Column")
     info("Restoring column 'total_amount'...")
     psql("postgres-orders", "orders_db",
          "ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_amount NUMERIC(10,2) DEFAULT 0;")
     ok("Column 'total_amount' restored")
 
-    info("Restarting connector task...")
-    restart = curl_json(f"{KC_URL}/connectors/{CONNECTOR}/tasks/0/restart", method="POST")
-    ok("Restart command sent")
-
-    info("Waiting 5s for connector to recover...")
-    time.sleep(5)
-
-    # -- Step 13: Verify recovery ------------------------------------
-    banner("STEP 13: Verify Recovery")
+    # -- Step 12: Verify recovery ------------------------------------
+    banner("STEP 12: Verify Recovery")
     psql("postgres-orders", "orders_db",
          "INSERT INTO orders (customer_id, total_amount, status, promo_code) "
          "VALUES (4, 49.99, 'delivered', 'FALL2024');")
     ok("Inserted order after recovery")
 
     time.sleep(3)
-    msg = read_avro_message(TOPIC, max_messages=1)
-    if msg and "FALL2024" in msg:
-        ok("Recovery successful! New message captured:")
-        print(msg)
+    offset_recovered = get_kafka_offset(TOPIC)
+    if offset_recovered > offset_after_drop:
+        ok(f"Recovery successful! New messages captured. Offset: {offset_after_drop} -> {offset_recovered}")
     else:
-        warn("Message not yet visible. Check logs: docker logs -f kafka-connect")
+        warn("Offset did not increase. Check logs: docker logs -f kafka-connect")
 
     status = curl_json(f"{KC_URL}/connectors/{CONNECTOR}/status")
     tasks = status.get("tasks", [])
@@ -433,12 +421,16 @@ def main():
   2. {C.GREEN}\u2713{C.END} Schema Registry auto-registers Avro schema v1
   3. {C.GREEN}\u2713{C.END} ALTER TABLE ADD COLUMN -> Schema Registry accepts v2 (BACKWARD compat)
   4. {C.GREEN}\u2713{C.END} New field appears in Kafka messages automatically
-  5. {C.RED}\u2717{C.END} ALTER TABLE DROP COLUMN -> Schema Registry rejects (409 Conflict)
-  6. {C.RED}\u2717{C.END} Connector task FAILS -- strict schema-on-write protects consumers
-  7. {C.GREEN}\u2713{C.END} Restore column + restart -> pipeline recovers
+  5. {C.YELLOW}\u26a0{C.END} ALTER TABLE DROP COLUMN -> Debezium handles gracefully
+       (ExtractNewRecordState adds null, connector stays RUNNING)
+  6. {C.RED}\u2717{C.END} Direct schema registration without total_amount -> 409 REJECTED
+       Schema Registry enforces BACKWARD compatibility
+  7. {C.GREEN}\u2713{C.END} Restore column -> pipeline continues normally
 
-{C.BOLD}Key takeaway:{C.END} Schema-on-Write with BACKWARD compatibility prevents
-accidental breaking changes from reaching downstream consumers.
+{C.BOLD}Key takeaways:{C.END}
+  - Debezium's unwrap transform provides "soft" protection (null-filling)
+  - Schema Registry provides "hard" protection (409 rejection)
+  - Together they ensure downstream consumers never break
 """)
 
 

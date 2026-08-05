@@ -1,0 +1,71 @@
+version: 2
+
+sources:
+  - name: iceberg_raw
+    database: iceberg
+    schema: raw
+    tables:
+      - name: orders
+        columns:
+          - name: id
+            tests:
+              - not_null
+              - unique
+          - name: total_amount
+            tests:
+              - not_null
+          - name: status
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled']
+      - name: customers
+        columns:
+          - name: id
+            tests:
+              - not_null
+              - unique
+          - name: email
+            tests:
+              - not_null
+
+models:
+  - name: brz_orders
+    columns:
+      - name: id
+        tests:
+          - not_null
+          - unique
+      - name: total_amount
+        tests:
+          - not_null
+
+  - name: slv_orders
+    columns:
+      - name: order_id
+        tests:
+          - not_null
+          - unique
+      - name: total_amount
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "> 0"
+      - name: status
+        tests:
+          - accepted_values:
+              values: ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled']
+      - name: customer_email
+        tests:
+          - relationships:
+              to: ref('slv_customers')
+              field: customer_id
+
+  - name: fct_daily_revenue
+    columns:
+      - name: order_date
+        tests:
+          - not_null
+      - name: total_revenue
+        tests:
+          - not_null
