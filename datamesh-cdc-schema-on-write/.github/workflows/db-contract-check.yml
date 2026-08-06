@@ -1,0 +1,61 @@
+name: DB Contract & Liquibase Validation
+
+on:
+  pull_request:
+    paths:
+      - 'db/**'
+      - 'datacontract.yml'
+      - 'src/main/resources/db/**'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── 1. Проверяем, что datacontract.yml обновлён при изменении DDL ──
+      - name: Check datacontract.yml is modified
+        if: contains(github.event.pull_request.changed_files, 'db/')
+        run: |
+          if ! git diff --name-only origin/${{ github.base_ref }} | grep -q "datacontract.yml"; then
+            echo "::error::При изменении DDL обязательно обновите datacontract.yml"
+            exit 1
+          fi
+
+      # ── 2. Валидация синтаксиса datacontract.yml ──
+      - name: Validate Data Contract YAML
+        uses: datacontract/cli-action@v1
+        with:
+          command: 'datacontract test datacontract.yml'
+
+      # ── 3. Liquibase validate — микросервис БД (PostgreSQL) ──
+      - name: Liquibase Validate (Service DB)
+        uses: liquibase-github-actions/validate@v4.25
+        with:
+          changelogFile: db/changelog/db.changelog-master.xml
+          url: jdbc:postgresql://localhost:5432/test_db
+          username: test
+          password: test
+          classpath: db/changelog/
+
+      # ── 4. Liquibase validate — DWH (Oracle) ──
+      - name: Liquibase Validate (DWH)
+        uses: liquibase-github-actions/validate@v4.25
+        with:
+          changelogFile: db/changelog/db.changelog-master.xml
+          url: jdbc:oracle:thin:@//localhost:1521/DWH
+          username: test
+          password: test
+          contexts: dwh
+          classpath: db/changelog/
+
+      # ── 5. Проверка CODEOWNERS — ревью от DWH team ──
+      - name: Require DWH Owner Review
+        run: |
+          REVIEWERS=$(gh pr view ${{ github.event.pull_request.number }} --json reviews --jq '.reviews[].author.login' | sort -u)
+          if ! echo "$REVIEWERS" | grep -qE "dwh-lead|dwh-architect|data-platform"; then
+            echo "::error::В PR с DDL изменениями обязателен аппрув от DWH team (dwh-lead, dwh-architect, data-platform)"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,100 @@
+dataContractSpecification: 1.1.0
+id: urn:datacontract:order-service:orders
+info:
+  title: Orders Domain Contract
+  version: 1.2.0
+  status: active
+  owner: order-service-team
+  dwhOwner: dwh-platform-team
+
+servers:
+  operational:
+    type: postgresql
+    host: ${MS_DB_HOST}
+    database: order_service
+    schema: public
+  warehouse:
+    type: oracle
+    host: ${DWH_HOST}
+    database: DWH
+    schema: dwh
+
+models:
+  orders:
+    description: Операционная таблица заказов
+    type: table
+    fields:
+      id:
+        type: bigint
+        primary: true
+        description: Суррогатный ключ микросервиса
+      external_id:
+        type: varchar(64)
+        unique: true
+        description: Бизнес-ключ, реплицируется в DWH как NK
+      customer_id:
+        type: bigint
+        required: true
+      status:
+        type: varchar(32)
+        enum: [CREATED, PAID, SHIPPED, DELIVERED, CANCELLED]
+        description: |
+          ⚠️ Добавление нового статуса требует:
+          1. UPDATE datacontract.yml (enum)
+          2. UPDATE dwh.orders_dim.status_value
+          3. Согласование с DWH team
+      amount:
+        type: numeric(19,4)
+        description: Сумма заказа
+      created_at:
+        type: timestamptz
+        description: Время создания в микросервисе
+      updated_at:
+        type: timestamptz
+
+  dwh.orders_fact:
+    description: Факт-таблица заказов в DWH
+    type: table
+    fields:
+      order_sk:
+        type: number
+        primary: true
+      order_nk:
+        type: varchar2(64)
+        references: orders.external_id
+        description: Natural Key из микросервиса
+      status:
+        type: varchar2(32)
+        references: orders.status
+      amount:
+        type: number(19,4)
+        references: orders.amount
+      created_dttm:
+        type: timestamp
+        references: orders.created_at
+      load_dttm:
+        type: timestamp
+        description: Время загрузки в DWH (техническое)
+      source_system:
+        type: varchar2(32)
+        default: order-service
+
+quality:
+  - type: rowCount
+    description: Репликация через GoldenGate — лаг не более 5 минут
+    query: |
+      SELECT COUNT(*) FROM operational.orders o
+      WHERE o.created_at > SYSDATE - INTERVAL '1' HOUR
+      MINUS
+      SELECT COUNT(*) FROM warehouse.orders_fact f
+      WHERE f.created_dttm > SYSDATE - INTERVAL '1' HOUR
+    mustBeLessThan: 10
+
+sla:
+  replicationLag: PT5M
+  availability: 99.9%
+
+changelog:
+  # Ссылка на Liquibase changesets — CI проверяет наличие
+  service: db/changelog/changesets/
+  warehouse: db/changelog/warehouse/

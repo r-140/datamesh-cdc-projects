@@ -1,0 +1,15 @@
+name: db
+on:
+  pull_request:
+    paths: ['db/**', 'datacontract.yml']
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: liquibase-github-actions/validate@v4.25
+        with:
+          changelogFile: db/changelog/db.changelog-master.xml
+          url: jdbc:postgresql://localhost:5432/test
+          username: test
+          password: test
