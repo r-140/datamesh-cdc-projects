@@ -1,25 +1,16 @@
-version: '3.8'
-
 services:
+  # ==================== SOURCE DATABASES ====================
   postgres-orders:
     image: debezium/postgres:15-alpine
     container_name: postgres-orders
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: orders_db
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: orders_db
     volumes:
       - postgres_orders_data:/var/lib/postgresql/data
-      - ./scripts/init_orders.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    command: >
-      postgres -c wal_level=logical -c max_replication_slots=4 -c max_wal_senders=4
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d orders_db"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
     networks:
       - datamesh
 
@@ -29,53 +20,68 @@ services:
     ports:
       - "5433:5432"
     environment:
-      POSTGRES_DB: customers_db
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: customers_db
     volumes:
       - postgres_customers_data:/var/lib/postgresql/data
-      - ./scripts/init_customers.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    command: >
-      postgres -c wal_level=logical -c max_replication_slots=4 -c max_wal_senders=4
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d customers_db"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
     networks:
       - datamesh
 
+  # ==================== DWH (TARGET FOR DBT) ====================
+  postgres-dwh:
+    image: postgres:15-alpine
+    container_name: postgres-dwh
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_USER: dwh
+      POSTGRES_PASSWORD: dwh
+      POSTGRES_DB: datamesh_dwh
+    volumes:
+      - postgres_dwh_data:/var/lib/postgresql/data
+      - ./postgres-dwh/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - datamesh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dwh -d datamesh_dwh"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ==================== KAFKA (KRaft) ====================
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka
-    hostname: kafka
     ports:
       - "9092:9092"
       - "29092:29092"
-      - "9093:9093"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_LISTENERS: PLAINTEXT://:29092,PLAINTEXT_HOST://:9092,CONTROLLER://:9093
+      KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:9093,PLAINTEXT_HOST://:9092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      CLUSTER_ID: "ela4zpktSX2SmBDlE9FJjA=="
+      CLUSTER_ID: MkU3OEVBNTYwNTUENDI2Qg  # ← валидный base64 UUID
+    volumes:
+      - kafka_data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "kafka:29092"]
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:29092"]
       interval: 10s
       timeout: 10s
-      retries: 5
+      retries: 10
+      start_period: 30s
     networks:
       - datamesh
 
+  # ==================== SCHEMA REGISTRY ====================
   schema-registry:
     image: confluentinc/cp-schema-registry:7.5.3
     container_name: schema-registry
@@ -84,113 +90,54 @@ services:
     environment:
       SCHEMA_REGISTRY_HOST_NAME: schema-registry
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:29092
-      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
     depends_on:
       - kafka
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
     networks:
       - datamesh
 
+  # ==================== KAFKA CONNECT (CDC) ====================
   kafka-connect:
-    build: ./kafka-connect
+    build:
+      context: ./kafka-connect
+      dockerfile: Dockerfile
     container_name: kafka-connect
     ports:
       - "8083:8083"
     environment:
       CONNECT_BOOTSTRAP_SERVERS: kafka:29092
-      CONNECT_GROUP_ID: 1
-      CONNECT_CONFIG_STORAGE_TOPIC: connect_configs
+      CONNECT_GROUP_ID: connect-cluster
+      CONNECT_CONFIG_STORAGE_TOPIC: connect-configs
       CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
-      CONNECT_CONFIG_STORAGE_PARTITIONS: 1
-      CONNECT_OFFSET_STORAGE_TOPIC: connect_offsets
+      CONNECT_OFFSET_STORAGE_TOPIC: connect-offsets
       CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
-      CONNECT_OFFSET_STORAGE_PARTITIONS: 1
-      CONNECT_STATUS_STORAGE_TOPIC: connect_statuses
+      CONNECT_STATUS_STORAGE_TOPIC: connect-status
       CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
-      CONNECT_STATUS_STORAGE_PARTITIONS: 1
       CONNECT_KEY_CONVERTER: io.confluent.connect.avro.AvroConverter
       CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
       CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
       CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
       CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
-      CONNECT_REST_PORT: 8083
       CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
     depends_on:
-      - kafka
-      - schema-registry
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8083/connectors"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    networks:
-      - datamesh
-
-  minio:
-    image: minio/minio:RELEASE.2024-01-13T07-53-03Z
-    container_name: minio
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    environment:
-      MINIO_ROOT_USER: minio
-      MINIO_ROOT_PASSWORD: minio123
-    volumes:
-      - minio_data:/data
-    command: server /data --console-address ":9001"
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/9000' || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    networks:
-      - datamesh
-
-  iceberg-rest:
-    image: tabulario/iceberg-rest:latest
-    container_name: iceberg-rest
-    ports:
-      - "8181:8181"
-    environment:
-      CATALOG_URI: jdbc:sqlite:/tmp/iceberg_catalog.db
-      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
-      CATALOG_S3_ENDPOINT: http://minio:9000
-      CATALOG_S3_ACCESS_KEY_ID: minio
-      CATALOG_S3_SECRET_ACCESS_KEY: minio123
-      CATALOG_S3_PATH_STYLE_ACCESS: "true"
-    depends_on:
-      minio:
+      kafka:
         condition: service_healthy
+      schema-registry:
+        condition: service_started
+      postgres-orders:
+        condition: service_started
+      postgres-customers:
+        condition: service_started
     networks:
       - datamesh
 
-  trino:
-    image: trinodb/trino:431
-    container_name: trino
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./trino/catalog:/etc/trino/catalog:ro
-    depends_on:
-      - iceberg-rest
-      - minio
-    networks:
-      - datamesh
-
+  # ==================== MONITORING ====================
   prometheus:
     image: prom/prometheus:v2.48.0
     container_name: prometheus
     ports:
       - "9090:9090"
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus:/etc/prometheus:ro
     networks:
       - datamesh
 
@@ -199,48 +146,21 @@ services:
     container_name: grafana
     ports:
       - "3000:3000"
-    environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
-      GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
     volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana_data:/var/lib/grafana
-      - ./grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
     depends_on:
       - prometheus
     networks:
       - datamesh
 
-  schema-evolution-service:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: schema-evolution-service
-    command: python -m src.datamesh_cdc.schema_evolution_service
-    environment:
-      SCHEMA_REGISTRY_URL: http://schema-registry:8081
-      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      ICEBERG_REST_URL: http://iceberg-rest:8181
-      S3_ENDPOINT: http://minio:9000
-      S3_ACCESS_KEY: minio
-      S3_SECRET_KEY: minio123
-    volumes:
-      - ./src:/app/src:ro
-    depends_on:
-      schema-registry:
-        condition: service_healthy
-      kafka-connect:
-        condition: service_healthy
-    networks:
-      - datamesh
+networks:
+  datamesh:
+    driver: bridge
 
 volumes:
   postgres_orders_data:
   postgres_customers_data:
-  minio_data:
+  postgres_dwh_data:
+  kafka_data:
   grafana_data:
-
-networks:
-  datamesh:
-    driver: bridge
-    name: datamesh

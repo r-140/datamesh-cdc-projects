@@ -14,6 +14,15 @@ down: ## Stop infrastructure
 connectors: ## Register/update Debezium connectors
 	./scripts/setup-connectors.sh
 
+dbt-setup:
+	cd dbt_datamesh && dbt deps
+
+dbt-run:
+	cd dbt_datamesh && dbt run
+
+dbt-test:
+	cd dbt_datamesh && dbt test
+
 simulate: ## Run schema evolution simulation
 	rm -f state.json /tmp/datamesh_simulate.json
 	python -m src.datamesh_cdc.schema_evolution_service --simulate

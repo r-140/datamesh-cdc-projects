@@ -1,10 +1,11 @@
--- Silver: deduplicated customers
+{{ config(
+    materialized='table',
+    schema='raw_silver'
+) }}
 
-SELECT DISTINCT
-    id AS customer_id,
-    email,
-    full_name,
-    country,
-    created_at AS registered_at
+SELECT
+    customer_id,
+    customer_email,
+    segment,
+    registration_date
 FROM {{ ref('brz_customers') }}
-WHERE email IS NOT NULL

@@ -1,61 +1,54 @@
-# pipeline_manager.py
+# Pipeline Manager
 
-## Purpose
+## Концепция
 
-Manages the lifecycle of CDC pipelines across Data Mesh domains. Provides a **self-serve API** for domain teams to create and monitor their own pipelines.
+Каждый downstream-пайплайн (consumer) регистрирует свой **режим подписки** на домен:
 
-## Key Classes
+| Режим | Описание | Поведение при breaking change |
+|-------|----------|------------------------------|
+| **opt-in** | Явное согласие на все изменения | PROPAGATED — изменения применяются |
+| **opt-out** | Явный отказ от breaking changes | PAUSED — пайплайн останавливается |
 
-### `PipelineManager`
-
-Central registry of all pipelines.
-
-- `create_pipeline(...)` — creates a new pipeline with config
-- `get_pipeline(pipeline_id)` — retrieves pipeline by ID
-- `list_pipelines(domain=None)` — lists all or domain-filtered pipelines
-- `handle_schema_change(pipeline_id, new_schema)` — routes schema change to specific pipeline
-- `get_domain_stats(domain)` — returns aggregate stats (running/paused, opt-in/opt-out counts)
-- `_save_state()` / `_load_state()` — persists pipeline state to JSON file
-
-### `SelfServeAPI`
-
-API layer for domain teams.
-
-- `create_pipeline_request(request)` — validates required fields, creates pipeline
-- `list_domain_pipelines(domain)` — returns pipelines owned by a domain
-
-## State Persistence
-
-Pipeline state is saved to a JSON file (default: `/tmp/datamesh_state.json`):
-
-```json
-{
-  "version": "1.0",
-  "updated_at": "2024-01-15T10:00:00",
-  "pipelines": {
-    "orders-to-analytics": {
-      "config": { ... },
-      "state": "RUNNING",
-      "history": [ ... ]
-    }
-  }
-}
-```
-
-## Usage Example
+## Логика принятия решений
 
 ```python
-from datamesh_cdc.pipeline_manager import PipelineManager, SelfServeAPI
+def evaluate_pipeline(pipeline_mode, consumed_fields, changed_fields, change_type):
+    """
+    pipeline_mode: 'opt-in' | 'opt-out'
+    consumed_fields: ['status', 'total_amount']
+    changed_fields: ['status']  # удалено
+    change_type: 'BREAKING' | 'COMPATIBLE'
+    """
+    if change_type == 'COMPATIBLE':
+        return 'CONTINUED'
 
-manager = PipelineManager(state_file="/tmp/state.json")
-api = SelfServeAPI(manager)
+    if pipeline_mode == 'opt-in':
+        return 'PROPAGATED'
 
-# Domain team creates their pipeline
-result = api.create_pipeline_request({
-    "pipeline_id": "my-pipeline",
-    "source_topic": "domain.events",
-    "sink_table": "raw.events",
-    "domain": "my-domain",
-    "opt_in_schema_evolution": True
-})
+    # opt-out + breaking
+    affected = set(consumed_fields) & set(changed_fields)
+    if affected:
+        return 'PAUSED'
+    return 'CONTINUED'
 ```
+
+## Примеры сценариев
+
+### Сценарий A: Изменение типа поля (double → string)
+- **orders-to-analytics** (opt-in) → PAUSED (incompatible schema)
+- **orders-to-reporting** (opt-out) → PAUSED (incompatible schema)
+
+### Сценарий D: Добавление optional поля (promo_code)
+- **orders-to-analytics** (opt-in) → PROPAGATED
+- **orders-to-reporting** (opt-out) → CONTINUED (changes outside consumed fields)
+
+### Сценарий G: Удаление поля status
+- **orders-to-ml** (opt-out, consumes `status`) → PAUSED
+- **orders-to-bi** (opt-out, не использует `status`) → CONTINUED
+- **orders-to-archive** (opt-in) → PROPAGATED
+
+## Schema Registry Integration
+
+Pipeline Manager проверяет регистрацию схемы перед принятием решения:
+- Если Schema Registry вернул **409** — изменение breaking
+- Если **200** — изменение compatible

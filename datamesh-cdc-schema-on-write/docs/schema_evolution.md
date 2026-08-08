@@ -1,60 +1,40 @@
-# schema_evolution.py
+# Schema Evolution
 
-## Purpose
+## Уровни защиты
 
-Core module for **strict schema evolution**. Registers schemas in Confluent Schema Registry, detects changes, and decides whether to propagate or pause the pipeline.
+### 1. Schema Registry (hard protection)
+- Режим совместимости: **BACKWARD** (по умолчанию)
+- Новая схема должна быть readable старыми consumers
+- Breaking changes отклоняются с **HTTP 409**
 
-## Key Classes
+### 2. Debezium ExtractNewRecordState (soft protection)
+- `transforms.unwrap.delete.handling.mode=rewrite`
+- `transforms.unwrap.drop.tombstones=false`
+- При DROP COLUMN: заполняет `null` вместо падения
 
-### `SchemaEvolutionManager`
+## Правила BACKWARD compatibility
 
-- `register_schema(subject, schema)` — registers schema; raises `SchemaEvolutionError` if incompatible
-- `get_latest_schema(subject)` — fetches latest schema from registry
-- `get_schema_changes(subject, old_v, new_v)` — returns list of `SchemaChange` objects
-- `_compare_schemas(old, new)` — detects added/removed/modified fields
-- `_is_safe_type_change(old_type, new_type)` — allows widening: `int→long→float→double`
+| Операция | Результат | Правило |
+|----------|-----------|---------|
+| ADD COLUMN optional | ✅ Accepted | Новое поле с `default=null` |
+| ADD COLUMN required | ❌ Rejected | Нет default — старые readers сломаются |
+| DROP COLUMN | ⚠️ Debezium handles | Schema Registry 409, но Debezium null-fills |
+| RENAME COLUMN | ❌ Rejected | Это удаление + добавление |
+| CHANGE TYPE | ❌ Rejected | TYPE_MISMATCH |
 
-### `DataMeshPipeline`
+## Проверка через API
 
-- `handle_schema_change(new_schema)` — main entry point
-  - **Opt-in**: propagates all compatible changes automatically
-  - **Opt-out**: checks `consumed_fields`; pauses if breaking change affects them
-- `_propagate_to_sink(schema)` — generates Iceberg DDL
-- `_pause_pipeline(reason)` — sets state to `PAUSED`, logs error
-- `_send_alert(type, changes)` — sends webhook notification to domain owner
+```bash
+# Регистрация новой схемы
+curl -X POST http://localhost:8081/subjects/orders-value/versions   -H "Content-Type: application/vnd.schemaregistry.v1+json"   -d '{"schema": "{\"type\":\"record\"...}"}'
 
-### `PipelineConfig`
+# Проверка совместимости
+curl -X POST http://localhost:8081/compatibility/subjects/orders-value/versions/latest   -d '{"schema": "..."}'
+```
 
-Dataclass holding pipeline configuration:
-- `opt_in_schema_evolution` — `True` = accept all changes, `False` = protect consumed fields
-- `consumed_fields` — fields the downstream pipeline depends on (opt-out mode)
-- `compatibility_level` — `BACKWARD`, `FORWARD`, `FULL`, or `NONE`
+## Переключение режима совместимости
 
-## Schema Change Types
-
-| Type | Breaking? | Example |
-|------|-----------|---------|
-| `FIELD_ADDED` | Only if required without default | `promo_code` with default → safe |
-| `FIELD_REMOVED` | Only if field was required | Dropping `total_amount` → breaking |
-| `TYPE_CHANGED` | Only if not safe widening | `int→long` → safe; `long→int` → breaking |
-| `DEFAULT_CHANGED` | Never | Changing default value |
-
-## Usage Example
-
-```python
-from datamesh_cdc.schema_evolution import SchemaEvolutionManager, DataMeshPipeline, PipelineConfig
-
-manager = SchemaEvolutionManager("http://localhost:8081")
-config = PipelineConfig(
-    pipeline_id="orders-to-reporting",
-    source_topic="orders-server.public.orders",
-    sink_table="reporting.orders_summary",
-    domain="orders",
-    opt_in_schema_evolution=False,
-    consumed_fields=["id", "total_amount"]
-)
-pipeline = DataMeshPipeline(config, manager)
-
-result = pipeline.handle_schema_change(new_schema)
-# {"action": "PAUSED", "affected_fields": ["total_amount"], ...}
+```bash
+# FULL — строже BACKWARD
+curl -X PUT http://localhost:8081/config/orders-value   -d '{"compatibility": "FULL"}'
 ```

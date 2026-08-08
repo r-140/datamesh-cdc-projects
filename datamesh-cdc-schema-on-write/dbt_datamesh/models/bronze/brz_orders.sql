@@ -1,12 +1,13 @@
--- Bronze: raw CDC data from Kafka/Iceberg
--- Materialized as view — no transformation, just exposure
+{{ config(
+    materialized='view',
+    schema='raw_bronze'
+) }}
 
 SELECT
-    id,
+    id AS order_id,
     customer_id,
-    CAST(total_amount AS DECIMAL(10,2)) AS total_amount,
+    customer_email,
     status,
-    promo_code,
-    created_at,
-    updated_at
-FROM {{ source('iceberg_raw', 'orders') }}
+    total_amount,
+    order_date
+FROM {{ source('raw', 'orders') }}

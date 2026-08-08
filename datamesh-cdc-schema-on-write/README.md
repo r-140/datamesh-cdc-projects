@@ -38,10 +38,9 @@ python scripts/run_demo.py
 python scripts/schema_evolution_simulator.py
 
 # 6. Build dbt models
-cd dbt_datamesh
-dbt deps
-dbt run
-dbt test
+make dbt-setup
+make dbt-run
+make dbt-test
 ```
 
 ## Service URLs

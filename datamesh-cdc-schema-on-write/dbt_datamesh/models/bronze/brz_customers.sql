@@ -1,9 +1,11 @@
--- Bronze: raw CDC data from Kafka/Iceberg
+{{ config(
+    materialized='view',
+    schema='raw_bronze'
+) }}
 
 SELECT
-    id,
-    email,
-    full_name,
-    country,
-    created_at
-FROM {{ source('iceberg_raw', 'customers') }}
+    id AS customer_id,
+    email AS customer_email,
+    segment,
+    registration_date
+FROM {{ source('raw', 'customers') }}

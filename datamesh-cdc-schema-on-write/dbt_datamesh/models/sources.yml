@@ -1,0 +1,35 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: raw
+    tables:
+      - name: orders
+        columns:
+          - name: id
+            tests:
+              - not_null
+              - unique
+          - name: customer_id
+          - name: customer_email
+          - name: status
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled']
+          - name: total_amount
+            tests:
+              - not_null
+          - name: order_date
+
+      - name: customers
+        columns:
+          - name: id
+            tests:
+              - not_null
+              - unique
+          - name: email
+            tests:
+              - not_null
+          - name: segment
+          - name: registration_date

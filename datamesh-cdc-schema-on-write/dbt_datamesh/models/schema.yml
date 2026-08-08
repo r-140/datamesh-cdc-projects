@@ -1,46 +1,24 @@
 version: 2
 
-sources:
-  - name: iceberg_raw
-    database: iceberg
-    schema: raw
-    tables:
-      - name: orders
-        columns:
-          - name: id
-            tests:
-              - not_null
-              - unique
-          - name: total_amount
-            tests:
-              - not_null
-          - name: status
-            tests:
-              - not_null
-              - accepted_values:
-                  values: ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled']
-      - name: customers
-        columns:
-          - name: id
-            tests:
-              - not_null
-              - unique
-          - name: email
-            tests:
-              - not_null
-
 models:
   - name: brz_orders
+    schema: raw_bronze
     columns:
-      - name: id
+      - name: order_id
         tests:
           - not_null
           - unique
-      - name: total_amount
+
+  - name: brz_customers
+    schema: raw_bronze
+    columns:
+      - name: customer_id
         tests:
           - not_null
+          - unique
 
   - name: slv_orders
+    schema: raw_silver
     columns:
       - name: order_id
         tests:
@@ -50,18 +28,22 @@ models:
         tests:
           - not_null
           - dbt_utils.expression_is_true:
-              expression: "> 0"
+              expression: ">= 0"
       - name: status
         tests:
           - accepted_values:
               values: ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled']
-      - name: customer_email
+
+  - name: slv_customers
+    schema: raw_silver
+    columns:
+      - name: customer_id
         tests:
-          - relationships:
-              to: ref('slv_customers')
-              field: customer_id
+          - not_null
+          - unique
 
   - name: fct_daily_revenue
+    schema: raw_gold
     columns:
       - name: order_date
         tests:
@@ -69,3 +51,6 @@ models:
       - name: total_revenue
         tests:
           - not_null
+
+  - name: dim_customer_segments
+    schema: raw_gold

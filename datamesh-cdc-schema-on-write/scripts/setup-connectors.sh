@@ -1,10 +1,12 @@
 #!/bin/bash
 set -e
 
+
 echo "Waiting for Kafka Connect..."
-until curl -s http://localhost:8083/connectors > /dev/null; do
+until curl -s http://localhost:8083/ | grep -q "version"; do
   sleep 2
 done
+echo "Kafka Connect is up."
 
 echo "Registering connectors..."
 
