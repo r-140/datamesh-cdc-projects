@@ -1,17 +1,21 @@
-.PHONY: up down simulate test lint clean
+.PHONY: up down fix-grafana-perms connectors dbt-setup dbt-run dbt-test simulate test lint clean
 
-up: ## Start infrastructure (cleans old containers)
-	docker compose down -v --remove-orphans
+fix-grafana-perms:
+	@echo "Fixing Grafana dashboard permissions..."
+	@sudo chown -R $(USER):$(USER) grafana/dashboards/ 2>/dev/null || true
+	@chmod 644 grafana/dashboards/*.json 2>/dev/null || true
+
+up: docker compose down -v --remove-orphans
 	docker rm -f minio kafka postgres-customers postgres-orders prometheus grafana trino iceberg-rest schema-registry kafka-connect schema-evolution-service 2>/dev/null || true
 	docker compose up -d --build
 	@echo "Waiting for services..."
 	@sleep 25
 	@./scripts/setup-connectors.sh || true
 
-down: ## Stop infrastructure
+down: fix-grafana-perms
 	docker compose down -v --remove-orphans
 
-connectors: ## Register/update Debezium connectors
+connectors:
 	./scripts/setup-connectors.sh
 
 dbt-setup:
@@ -23,17 +27,17 @@ dbt-run:
 dbt-test:
 	cd dbt_datamesh && dbt test
 
-simulate: ## Run schema evolution simulation
+simulate:
 	rm -f state.json /tmp/datamesh_simulate.json
 	python -m src.datamesh_cdc.schema_evolution_service --simulate
 
-test: ## Run pytest
+test:
 	pytest tests/ -v
 
-lint: ## Run ruff
+lint:
 	ruff check src/ tests/
 
-clean: ## Remove all containers, volumes, and state
+clean:
 	docker compose down -v --remove-orphans
 	docker rm -f minio kafka postgres-customers postgres-orders prometheus grafana trino iceberg-rest schema-registry kafka-connect schema-evolution-service 2>/dev/null || true
 	rm -f state.json /tmp/datamesh_simulate.json

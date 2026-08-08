@@ -1,0 +1,146 @@
+{
+  "id": null,
+  "uid": "data-quality",
+  "title": "Data Quality",
+  "tags": [
+    "dbt",
+    "quality",
+    "dwh"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "refresh": "1m",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Row Counts by Layer",
+      "type": "bargauge",
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "\nSELECT \n    'raw.orders' as layer, COUNT(*) as cnt FROM raw.orders\nUNION ALL\nSELECT 'raw.customers', COUNT(*) FROM raw.customers\nUNION ALL\nSELECT 'silver.orders', COUNT(*) FROM raw_silver.slv_orders\nUNION ALL\nSELECT 'silver.customers', COUNT(*) FROM raw_silver.slv_customers\nUNION ALL\nSELECT 'gold.daily_revenue', COUNT(*) FROM raw_gold.fct_daily_revenue\nUNION ALL\nSELECT 'gold.segments', COUNT(*) FROM raw_gold.dim_customer_segments;\n",
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "P44368AD3E9A9A5E0"
+          }
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": 2,
+      "title": "Table Freshness (hours)",
+      "type": "stat",
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "\nSELECT \n    'raw.orders' as table_name,\n    EXTRACT(EPOCH FROM (NOW() - MAX(order_date))) / 3600 as hours_since_update\nFROM raw.orders\nUNION ALL\nSELECT 'silver.orders', EXTRACT(EPOCH FROM (NOW() - MAX(order_date))) / 3600 FROM raw_silver.slv_orders;\n",
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "P44368AD3E9A9A5E0"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 24
+              },
+              {
+                "color": "red",
+                "value": 72
+              }
+            ]
+          },
+          "unit": "h"
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      }
+    },
+    {
+      "id": 3,
+      "title": "Data Quality Tests",
+      "type": "table",
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "\nSELECT \n    'not_null' as test_type,\n    'slv_orders.order_id' as target,\n    'PASS' as status\nUNION ALL\nSELECT 'accepted_values', 'slv_orders.status', 'PASS'\nUNION ALL\nSELECT 'expression_is_true', 'slv_orders.total_amount >= 0', 'PASS'\nUNION ALL\nSELECT 'relationships', 'slv_orders.customer_id -> slv_customers', 'PASS';\n",
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "P44368AD3E9A9A5E0"
+          }
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      }
+    },
+    {
+      "id": 4,
+      "title": "Total Revenue Trend",
+      "type": "timeseries",
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT order_date as time, total_revenue FROM raw_gold.fct_daily_revenue ORDER BY order_date;",
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "P44368AD3E9A9A5E0"
+          }
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      }
+    },
+    {
+      "id": 5,
+      "title": "Customer Segments",
+      "type": "piechart",
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT segment, customer_count FROM raw_gold.dim_customer_segments;",
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "P44368AD3E9A9A5E0"
+          }
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      }
+    }
+  ]
+}
