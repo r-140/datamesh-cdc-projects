@@ -5,7 +5,8 @@ fix-grafana-perms:
 	@sudo chown -R $(USER):$(USER) grafana/dashboards/ 2>/dev/null || true
 	@chmod 644 grafana/dashboards/*.json 2>/dev/null || true
 
-up: docker compose down -v --remove-orphans
+up:
+	docker compose down -v --remove-orphans
 	docker rm -f minio kafka postgres-customers postgres-orders prometheus grafana trino iceberg-rest schema-registry kafka-connect schema-evolution-service 2>/dev/null || true
 	docker compose up -d --build
 	@echo "Waiting for services..."

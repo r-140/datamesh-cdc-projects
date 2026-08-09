@@ -11,6 +11,7 @@ services:
       POSTGRES_DB: orders_db
     volumes:
       - postgres_orders_data:/var/lib/postgresql/data
+      - ./scripts/init_orders.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - datamesh
 
@@ -25,6 +26,7 @@ services:
       POSTGRES_DB: customers_db
     volumes:
       - postgres_customers_data:/var/lib/postgresql/data
+      - ./scripts/init_customers.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - datamesh
 
@@ -69,7 +71,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      CLUSTER_ID: MkU3OEVBNTYwNTUENDI2Qg  # ← валидный base64 UUID
+      CLUSTER_ID: MkU3OEVBNTYwNTUENDI2Qg
     volumes:
       - kafka_data:/var/lib/kafka/data
     healthcheck:
