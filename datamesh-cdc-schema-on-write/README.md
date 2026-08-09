@@ -56,7 +56,7 @@ make dbt-test
 | Prometheus | http://localhost:9090 | — |
 | Grafana | http://localhost:3000 | `admin` / `admin` |
 
-> **Note**: Trino (`:8080`), Iceberg REST Catalog (`:8181`) and MinIO (`:9000/:9001`) are available when running the extended stack (see `docker-compose.yml` extensions or run the Iceberg-enabled profile).
+> **Note**: Trino (`:8080`), Iceberg REST Catalog (`:8181`) and MinIO (`:9000/:9001`) are available when running the extended stack (see `../../../Downloads/docker-compose.yml` extensions or run the Iceberg-enabled profile).
 
 ## Data Flow
 
@@ -207,7 +207,7 @@ docker exec kafka kafka-console-consumer \
 | Problem | Solution |
 |---------|----------|
 | `make: *** No rule to make target 'docker'` | In `Makefile`, ensure the `up:` target has **no dependencies** after the colon. All shell commands must be indented with a **tab**, not spaces. |
-| `relation "customers" does not exist` | Init SQL scripts must be mounted into PostgreSQL containers. Check `docker-compose.yml` volumes: `scripts/init_customers.sql:/docker-entrypoint-initdb.d/init.sql:ro` |
+| `relation "customers" does not exist` | Init SQL scripts must be mounted into PostgreSQL containers. Check `../../../Downloads/docker-compose.yml` volumes: `scripts/init_customers.sql:/docker-entrypoint-initdb.d/init.sql:ro` |
 | `curl: (22) The requested URL returned error: 404` (JDBC) | Do not download JDBC connector as a single JAR. Use `confluent-hub install --no-prompt confluentinc/kafka-connect-jdbc:10.7.6` in the Dockerfile. |
 | `JdbcSinkConnector` not in connector-plugins | The JDBC plugin is missing from the Kafka Connect image. Rebuild with the updated `kafka-connect/Dockerfile`. |
 | `prometheus.yml is a directory` | `rm -rf prometheus/prometheus.yml` |
