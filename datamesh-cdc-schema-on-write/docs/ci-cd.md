@@ -52,7 +52,7 @@ jobs:
         run: cd dbt_datamesh && dbt test --target ci
 ```
 
-## Профиль CI
+## CI Profile
 
 ```yaml
 # dbt_datamesh/profiles.yml
@@ -79,9 +79,9 @@ datamesh_trino:
       threads: 4
 ```
 
-## Правила для PR
+## PR Checklist
 
-- [ ] `dbt run` проходит без ошибок
+- [ ] `dbt run` passes without errors
 - [ ] `dbt test` — 19/19 PASS
-- [ ] Schema изменений согласовано (если меняли `init.sql`)
-- [ ] Ревью от DWH-owner (если DDL-изменения)
+- [ ] Schema changes are agreed upon (if `init.sql` was modified)
+- [ ] Review from DWH owner (if DDL changes)

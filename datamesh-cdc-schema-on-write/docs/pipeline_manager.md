@@ -1,22 +1,22 @@
 # Pipeline Manager
 
-## Концепция
+## Concept
 
-Каждый downstream-пайплайн (consumer) регистрирует свой **режим подписки** на домен:
+Each downstream pipeline (consumer) registers its **subscription mode** for a domain:
 
-| Режим | Описание | Поведение при breaking change |
-|-------|----------|------------------------------|
-| **opt-in** | Явное согласие на все изменения | PROPAGATED — изменения применяются |
-| **opt-out** | Явный отказ от breaking changes | PAUSED — пайплайн останавливается |
+| Mode | Description | Behavior on breaking change |
+|------|-------------|-----------------------------|
+| **opt-in** | Explicit consent to all changes | PROPAGATED — changes are applied |
+| **opt-out** | Explicit refusal of breaking changes | PAUSED — pipeline is stopped |
 
-## Логика принятия решений
+## Decision Logic
 
 ```python
 def evaluate_pipeline(pipeline_mode, consumed_fields, changed_fields, change_type):
     """
     pipeline_mode: 'opt-in' | 'opt-out'
     consumed_fields: ['status', 'total_amount']
-    changed_fields: ['status']  # удалено
+    changed_fields: ['status']  # removed
     change_type: 'BREAKING' | 'COMPATIBLE'
     """
     if change_type == 'COMPATIBLE':
@@ -32,23 +32,23 @@ def evaluate_pipeline(pipeline_mode, consumed_fields, changed_fields, change_typ
     return 'CONTINUED'
 ```
 
-## Примеры сценариев
+## Scenario Examples
 
-### Сценарий A: Изменение типа поля (double → string)
-- **orders-to-analytics** (opt-in) → PAUSED (incompatible schema)
-- **orders-to-reporting** (opt-out) → PAUSED (incompatible schema)
+### Scenario A: Type change (double -> string)
+- **orders-to-analytics** (opt-in) -> PAUSED (incompatible schema)
+- **orders-to-reporting** (opt-out) -> PAUSED (incompatible schema)
 
-### Сценарий D: Добавление optional поля (promo_code)
-- **orders-to-analytics** (opt-in) → PROPAGATED
-- **orders-to-reporting** (opt-out) → CONTINUED (changes outside consumed fields)
+### Scenario D: Add optional field (promo_code)
+- **orders-to-analytics** (opt-in) -> PROPAGATED
+- **orders-to-reporting** (opt-out) -> CONTINUED (changes outside consumed fields)
 
-### Сценарий G: Удаление поля status
-- **orders-to-ml** (opt-out, consumes `status`) → PAUSED
-- **orders-to-bi** (opt-out, не использует `status`) → CONTINUED
-- **orders-to-archive** (opt-in) → PROPAGATED
+### Scenario G: Delete status field
+- **orders-to-ml** (opt-out, consumes `status`) -> PAUSED
+- **orders-to-bi** (opt-out, does not use `status`) -> CONTINUED
+- **orders-to-archive** (opt-in) -> PROPAGATED
 
 ## Schema Registry Integration
 
-Pipeline Manager проверяет регистрацию схемы перед принятием решения:
-- Если Schema Registry вернул **409** — изменение breaking
-- Если **200** — изменение compatible
+Pipeline Manager checks schema registration before making a decision:
+- If Schema Registry returns **409** — change is breaking
+- If **200** — change is compatible

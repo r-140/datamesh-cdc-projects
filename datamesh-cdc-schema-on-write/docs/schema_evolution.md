@@ -1,40 +1,40 @@
 # Schema Evolution
 
-## Уровни защиты
+## Protection Levels
 
 ### 1. Schema Registry (hard protection)
-- Режим совместимости: **BACKWARD** (по умолчанию)
-- Новая схема должна быть readable старыми consumers
-- Breaking changes отклоняются с **HTTP 409**
+- Compatibility mode: **BACKWARD** (default)
+- New schema must be readable by old consumers
+- Breaking changes are rejected with **HTTP 409**
 
 ### 2. Debezium ExtractNewRecordState (soft protection)
 - `transforms.unwrap.delete.handling.mode=rewrite`
 - `transforms.unwrap.drop.tombstones=false`
-- При DROP COLUMN: заполняет `null` вместо падения
+- On DROP COLUMN: fills `null` instead of crashing
 
-## Правила BACKWARD compatibility
+## BACKWARD Compatibility Rules
 
-| Операция | Результат | Правило |
-|----------|-----------|---------|
-| ADD COLUMN optional | ✅ Accepted | Новое поле с `default=null` |
-| ADD COLUMN required | ❌ Rejected | Нет default — старые readers сломаются |
-| DROP COLUMN | ⚠️ Debezium handles | Schema Registry 409, но Debezium null-fills |
-| RENAME COLUMN | ❌ Rejected | Это удаление + добавление |
-| CHANGE TYPE | ❌ Rejected | TYPE_MISMATCH |
+| Operation | Result | Rule |
+|-----------|--------|------|
+| ADD COLUMN optional | Accepted | New field with `default=null` |
+| ADD COLUMN required | Rejected | No default — old readers break |
+| DROP COLUMN | Debezium handles | Schema Registry 409, but Debezium null-fills |
+| RENAME COLUMN | Rejected | This is delete + add |
+| CHANGE TYPE | Rejected | TYPE_MISMATCH |
 
-## Проверка через API
+## API Check
 
 ```bash
-# Регистрация новой схемы
+# Register new schema
 curl -X POST http://localhost:8081/subjects/orders-value/versions   -H "Content-Type: application/vnd.schemaregistry.v1+json"   -d '{"schema": "{\"type\":\"record\"...}"}'
 
-# Проверка совместимости
+# Check compatibility
 curl -X POST http://localhost:8081/compatibility/subjects/orders-value/versions/latest   -d '{"schema": "..."}'
 ```
 
-## Переключение режима совместимости
+## Switching Compatibility Mode
 
 ```bash
-# FULL — строже BACKWARD
+# FULL — stricter than BACKWARD
 curl -X PUT http://localhost:8081/config/orders-value   -d '{"compatibility": "FULL"}'
 ```

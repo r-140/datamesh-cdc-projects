@@ -1,16 +1,16 @@
 # Schema Evolution Service
 
-## Назначение
+## Purpose
 
-REST-сервис, который:
-1. Отслеживает изменения схем в Schema Registry
-2. Оценивает влияние на downstream пайплайны
-3. Принимает решение: PROPAGATE / PAUSE / CONTINUE
+REST service that:
+1. Tracks schema changes in Schema Registry
+2. Evaluates impact on downstream pipelines
+3. Makes decision: PROPAGATE / PAUSE / CONTINUE
 
 ## API Endpoints
 
 ### POST /api/v1/schema/validate
-Валидация новой схемы перед регистрацией.
+Validate new schema before registration.
 
 ```json
 {
@@ -27,7 +27,7 @@ REST-сервис, который:
 ```
 
 ### GET /api/v1/pipelines/{domain}
-Список пайплайнов и их статус.
+List pipelines and their status.
 
 ```json
 {
@@ -44,7 +44,7 @@ REST-сервис, который:
 ```
 
 ### POST /api/v1/pipelines/{pipeline}/mode
-Изменение режима подписки.
+Change subscription mode.
 
 ```json
 {
@@ -52,20 +52,20 @@ REST-сервис, который:
 }
 ```
 
-## Логика работы
+## Logic
 
 ```
-1. Получить новую схему от producer
-2. Запросить текущую схему из Schema Registry
-3. Сравнить diff (fields added/removed/type-changed)
-4. Для каждого downstream pipeline:
-   a. Проверить пересечение changed_fields с consumed_fields
-   b. Применить pipeline_mode
-   c. Вернуть решение (PROPAGATED/PAUSED/CONTINUED)
-5. Если все пайплайны CONTINUED/PROPAGATED — разрешить регистрацию
+1. Receive new schema from producer
+2. Request current schema from Schema Registry
+3. Compare diff (fields added/removed/type-changed)
+4. For each downstream pipeline:
+   a. Check intersection of changed_fields with consumed_fields
+   b. Apply pipeline_mode
+   c. Return decision (PROPAGATED/PAUSED/CONTINUED)
+5. If all pipelines CONTINUED/PROPAGATED — allow registration
 ```
 
-## Запуск
+## Launch
 
 ```bash
 cd schema-evolution-service

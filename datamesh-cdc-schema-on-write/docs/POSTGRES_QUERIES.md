@@ -1,6 +1,6 @@
-# Полезные запросы (PostgreSQL DWH)
+# Useful Queries (PostgreSQL DWH)
 
-## Подключение
+## Connection
 
 ```bash
 # DWH
@@ -11,44 +11,44 @@ docker exec -it postgres-orders psql -U postgres -d orders_db
 docker exec -it postgres-customers psql -U postgres -d customers_db
 ```
 
-## Проверка схем DWH
+## Check DWH Schema
 
 ```sql
--- Список схем
+-- List schemas
 \dn
 
--- Таблицы в raw
+-- Tables in raw
 \dt raw.*
 
--- Таблицы в bronze
+-- Tables in bronze
 \dt raw_bronze.*
 
--- Таблицы в silver
+-- Tables in silver
 \dt raw_silver.*
 
--- Таблицы в gold
+-- Tables in gold
 \dt raw_gold.*
 ```
 
-## Seed-данные
+## Seed Data
 
 ```sql
 SELECT * FROM raw.orders;
 SELECT * FROM raw.customers;
 ```
 
-## Bronze layer
+## Bronze Layer
 
 ```sql
--- Представления над source
+-- Views over source
 SELECT * FROM raw_bronze.brz_orders LIMIT 5;
 SELECT * FROM raw_bronze.brz_customers LIMIT 5;
 ```
 
-## Silver layer
+## Silver Layer
 
 ```sql
--- Очищенные данные
+-- Cleaned data
 SELECT 
     order_id,
     customer_id,
@@ -59,33 +59,33 @@ FROM raw_silver.slv_orders
 WHERE total_amount > 0;
 ```
 
-## Gold layer
+## Gold Layer
 
 ```sql
--- Ежедневная выручка
+-- Daily revenue
 SELECT * FROM raw_gold.fct_daily_revenue ORDER BY order_date;
 
--- Сегменты клиентов
+-- Customer segments
 SELECT * FROM raw_gold.dim_customer_segments;
 ```
 
-## CDC-проверка (source)
+## CDC Check (source)
 
 ```sql
--- Проверка WAL-level
-SHOW wal_level;  -- должно быть 'logical'
+-- WAL level
+SHOW wal_level;  -- should be 'logical'
 
--- Список publication
+-- Publications list
 SELECT * FROM pg_publication;
 
--- Репликационные слоты
+-- Replication slots
 SELECT * FROM pg_replication_slots;
 ```
 
 ## Kafka Connect
 
 ```bash
-# Статус коннекторов
+# Connector status
 curl http://localhost:8083/connectors
 curl http://localhost:8083/connectors/orders-cdc-connector/status
 ```
@@ -93,12 +93,12 @@ curl http://localhost:8083/connectors/orders-cdc-connector/status
 ## Schema Registry
 
 ```bash
-# Субъекты
+# Subjects
 curl http://localhost:8081/subjects
 
-# Версии схемы
+# Schema versions
 curl http://localhost:8081/subjects/orders-server.public.orders-value/versions
 
-# Конкретная версия
+# Specific version
 curl http://localhost:8081/subjects/orders-server.public.orders-value/versions/1
 ```

@@ -1,6 +1,6 @@
-# Архитектура проекта
+# Project Architecture
 
-## Общая схема
+## Overview
 
 ```
 ┌─────────────────┐     ┌─────────────┐     ┌─────────────────┐
@@ -27,36 +27,36 @@
                         └─────────────┘
 ```
 
-## Компоненты
+## Components
 
 ### Source Layer
-- **postgres-orders** (:5432) — домен заказов, WAL включён для Debezium
-- **postgres-customers** (:5433) — домен клиентов
+- **postgres-orders** (:5432) — orders domain, WAL enabled for Debezium
+- **postgres-customers** (:5433) — customers domain
 
 ### Streaming Layer
-- **Kafka (KRaft)** (:9092) — брокер сообщений без Zookeeper
-- **Schema Registry** (:8081) — Avro-схемы, BACKWARD compatibility
+- **Kafka (KRaft)** (:9092) — message broker without Zookeeper
+- **Schema Registry** (:8081) — Avro schemas, BACKWARD compatibility
 - **Kafka Connect** (:8083) — Debezium Source Connectors
 
 ### Warehouse Layer
-- **postgres-dwh** (:5434) — целевая БД для dbt
-  - `raw` — seed-данные
-  - `raw_bronze` — views (бронза)
-  - `raw_silver` — очищенные таблицы
-  - `raw_gold` — агрегаты
+- **postgres-dwh** (:5434) — target DB for dbt
+  - `raw` — seed data
+  - `raw_bronze` — views (bronze)
+  - `raw_silver` — cleaned tables
+  - `raw_gold` — aggregates
 
 ### Transformations
-- **dbt** — модели bronze → silver → gold
-- **dbt-postgres** — адаптер для Postgres DWH
+- **dbt** — bronze → silver → gold models
+- **dbt-postgres** — adapter for Postgres DWH
 
 ### Monitoring
-- **Prometheus** (:9090) — метрики
-- **Grafana** (:3000) — дашборды
+- **Prometheus** (:9090) — metrics
+- **Grafana** (:3000) — dashboards
 
 ## Data Flow
 
-1. Приложение пишет в `postgres-orders` / `postgres-customers`
-2. Debezium читает WAL и публикует события в Kafka (Avro)
-3. Schema Registry валидирует схемы (BACKWARD compat)
-4. Данные доступны в DWH через seed / CDC sink (опционально)
-5. dbt строит bronze/silver/gold слои
+1. Application writes to `postgres-orders` / `postgres-customers`
+2. Debezium reads WAL and publishes events to Kafka (Avro)
+3. Schema Registry validates schemas (BACKWARD compat)
+4. Data available in DWH via seed / CDC sink (optional)
+5. dbt builds bronze/silver/gold layers
