@@ -1,0 +1,59 @@
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+
+rules:
+  # Connector task state: RUNNING=1, FAILED=0, PAUSED=0.5
+  - pattern: "kafka.connect<type=connector-task, connector=(.+), task=(.+)><>status: (.+)"
+    name: kafka_connect_connector_task_state
+    labels:
+      connector: "$1"
+      task: "$2"
+    value: 1
+
+  # Debezium: total events
+  - pattern: "debezium.([^:]+)<type=connector-metrics, context=([^,]+), server=([^,]+)><>TotalNumberOfEventsSeen"
+    name: debezium_events_total
+    labels:
+      connector: "$1"
+      context: "$2"
+      server: "$3"
+
+  # Debezium: lag ms
+  - pattern: "debezium.([^:]+)<type=connector-metrics, context=([^,]+), server=([^,]+)><>MilliSecondsSinceLastEvent"
+    name: debezium_lag_ms
+    labels:
+      connector: "$1"
+      context: "$2"
+      server: "$3"
+
+  # Debezium: snapshot running
+  - pattern: "debezium.([^:]+)<type=connector-metrics, context=([^,]+), server=([^,]+)><>SnapshotRunning"
+    name: debezium_snapshot_running
+    labels:
+      connector: "$1"
+      context: "$2"
+      server: "$3"
+
+  # Sink: send rate
+  - pattern: "kafka.connect<type=sink-task-metrics, connector=(.+), task=(.+)><>sink-record-send-rate"
+    name: kafka_connect_sink_record_send_rate
+    labels:
+      connector: "$1"
+      task: "$2"
+
+  # Source: poll rate
+  - pattern: "kafka.connect<type=source-task-metrics, connector=(.+), task=(.+)><>source-record-poll-rate"
+    name: kafka_connect_source_record_poll_rate
+    labels:
+      connector: "$1"
+      task: "$2"
+
+  # JVM
+  - pattern: "java.lang<type=Memory><>HeapMemoryUsage.used"
+    name: jvm_memory_heap_used_bytes
+  - pattern: "java.lang<type=Memory><>HeapMemoryUsage.max"
+    name: jvm_memory_heap_max_bytes
+  - pattern: "java.lang<type=GarbageCollector, name=([^>]+)><>CollectionCount"
+    name: jvm_gc_collection_count
+    labels:
+      gc: "$1"

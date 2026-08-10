@@ -2,6 +2,7 @@ groups:
   - name: cdc_pipeline
     interval: 30s
     rules:
+      # === YOUR EXISTING ALERTS (keep as-is) ===
       - alert: PostgresDWHDown
         expr: up{job="postgres-exporter"} == 0
         for: 1m
@@ -37,3 +38,47 @@ groups:
         annotations:
           summary: "Kafka Connect is down"
           description: "Kafka Connect on {{ $labels.instance }} is unreachable."
+
+      # === NEW: CDC-specific alerts (JMX metrics) ===
+      - alert: CDC_ConnectorTaskFailed
+        expr: kafka_connect_connector_task_state != 1
+        for: 30s
+        labels:
+          severity: critical
+          team: data-platform
+        annotations:
+          summary: "CDC connector {{ $labels.connector }} task FAILED"
+          description: "Connector {{ $labels.connector }} task {{ $labels.task }} is not RUNNING. Check Kafka Connect logs."
+
+      - alert: CDC_HighLag
+        expr: debezium_lag_ms > 60000
+        for: 2m
+        labels:
+          severity: warning
+          team: data-platform
+        annotations:
+          summary: "CDC lag is high for {{ $labels.server }}"
+          description: "Debezium connector {{ $labels.connector }} lag is {{ $value }}ms. Consumer may be falling behind."
+
+      - alert: CDC_PipelineStall
+        expr: |
+          rate(debezium_events_total[5m]) == 0
+          and
+          debezium_snapshot_running == 0
+        for: 3m
+        labels:
+          severity: warning
+          team: data-platform
+        annotations:
+          summary: "CDC pipeline stalled for {{ $labels.server }}"
+          description: "No CDC events in 5 minutes for {{ $labels.connector }}. Check source DB connectivity and WAL slot."
+
+      - alert: CDC_SinkStall
+        expr: rate(kafka_connect_sink_record_send_rate[5m]) == 0
+        for: 2m
+        labels:
+          severity: warning
+          team: data-platform
+        annotations:
+          summary: "JDBC Sink {{ $labels.connector }} stalled"
+          description: "Sink connector {{ $labels.connector }} has stopped sending records. Check DWH connectivity and table locks."

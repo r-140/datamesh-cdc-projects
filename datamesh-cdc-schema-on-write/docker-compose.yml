@@ -105,6 +105,7 @@ services:
     container_name: kafka-connect
     ports:
       - "8083:8083"
+      - "7071:7071"   # NEW: JMX Exporter
     environment:
       CONNECT_BOOTSTRAP_SERVERS: kafka:29092
       CONNECT_GROUP_ID: connect-cluster
@@ -120,6 +121,10 @@ services:
       CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
       CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
       CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
+      # NEW: JMX Exporter agent
+      KAFKA_OPTS: "-javaagent:/usr/share/jmx_exporter/jmx_prometheus_javaagent.jar=7071:/usr/share/jmx_exporter/config.yml"
+    volumes:
+      - ./prometheus/jmx_exporter_config.yml:/usr/share/jmx_exporter/config.yml:ro
     depends_on:
       kafka:
         condition: service_healthy
