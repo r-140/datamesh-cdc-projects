@@ -20,10 +20,10 @@ scrape_configs:
       - targets: ["postgres-exporter:9187"]
 
   # REST API health (keep your existing)
-  - job_name: "kafka-connect"
-    static_configs:
-      - targets: ["kafka-connect:8083"]
-    metrics_path: /
+#  - job_name: "kafka-connect"
+#    static_configs:
+#      - targets: ["kafka-connect:8083"]
+#    metrics_path: /
 
   # NEW: JMX metrics from Kafka Connect (Debezium + task states)
   - job_name: "kafka-connect-jmx"

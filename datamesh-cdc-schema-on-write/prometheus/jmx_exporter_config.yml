@@ -2,58 +2,79 @@ lowercaseOutputName: true
 lowercaseOutputLabelNames: true
 
 rules:
-  # Connector task state: RUNNING=1, FAILED=0, PAUSED=0.5
-  - pattern: "kafka.connect<type=connector-task, connector=(.+), task=(.+)><>status: (.+)"
-    name: kafka_connect_connector_task_state
+  # ─── Debezium Streaming Metrics ─────────────────────────────────────
+  - pattern: "debezium.postgres<type=connector-metrics, context=streaming, server=(.+)><>(TotalNumberOfEventsSeen|MilliSecondsSinceLastEvent|MilliSecondsBehindSource|SnapshotRunning|SnapshotCompleted|SnapshotAborted|SnapshotDurationInSeconds|StreamingRunning|SourceEventPosition|LastTransactionId|QueueTotalCapacity|QueueRemainingCapacity|QueueCurrentSize|Connected|NumberOfCommittedTransactions|NumberOfRolledBackTransactions|NumberOfNotWellFormedTransactions|NumberOfEventsSkipped)"
+    name: "debezium_$2"
+    labels:
+      server: "$1"
+    help: "Debezium streaming metric $2 for server $1"
+    type: GAUGE
+
+  # ─── Debezium Snapshot Metrics ──────────────────────────────────────
+  - pattern: "debezium.postgres<type=connector-metrics, context=snapshot, server=(.+)><>(TotalTableCount|RemainingTableCount|SnapshotRunning|SnapshotCompleted|SnapshotAborted|SnapshotDurationInSeconds|RowsScanned|LastEvent|MilliSecondsSinceLastEvent)"
+    name: "debezium_snapshot_$2"
+    labels:
+      server: "$1"
+    help: "Debezium snapshot metric $2 for server $1"
+    type: GAUGE
+
+  # ─── Kafka Connect Task State ───────────────────────────────────────
+  - pattern: "kafka.connect<type=connector-task-metrics, connector=(.+), task=(.+)><>(status)"
+    name: "kafka_connect_connector_task_state"
     labels:
       connector: "$1"
       task: "$2"
-    value: 1
+    help: "Kafka Connect task state (RUNNING=1, FAILED=0, UNASSIGNED=0)"
+    type: GAUGE
+    valueFactor: 1
 
-  # Debezium: total events
-  - pattern: "debezium.([^:]+)<type=connector-metrics, context=([^,]+), server=([^,]+)><>TotalNumberOfEventsSeen"
-    name: debezium_events_total
-    labels:
-      connector: "$1"
-      context: "$2"
-      server: "$3"
+  # ─── Kafka Connect Worker Metrics ─────────────────────────────────
+  - pattern: "kafka.connect<type=connect-worker-metrics><>(connector-count|task-count|connector-startup-attempts-total|connector-startup-failure-percentage|connector-startup-success-percentage)"
+    name: "kafka_connect_worker_$1"
+    help: "Kafka Connect worker metric $1"
+    type: GAUGE
 
-  # Debezium: lag ms
-  - pattern: "debezium.([^:]+)<type=connector-metrics, context=([^,]+), server=([^,]+)><>MilliSecondsSinceLastEvent"
-    name: debezium_lag_ms
-    labels:
-      connector: "$1"
-      context: "$2"
-      server: "$3"
-
-  # Debezium: snapshot running
-  - pattern: "debezium.([^:]+)<type=connector-metrics, context=([^,]+), server=([^,]+)><>SnapshotRunning"
-    name: debezium_snapshot_running
-    labels:
-      connector: "$1"
-      context: "$2"
-      server: "$3"
-
-  # Sink: send rate
-  - pattern: "kafka.connect<type=sink-task-metrics, connector=(.+), task=(.+)><>sink-record-send-rate"
-    name: kafka_connect_sink_record_send_rate
+  # ─── Kafka Connect Sink Metrics ────────────────────────────────────
+  - pattern: "kafka.connect<type=sink-task-metrics, connector=(.+), task=(.+)><>(sink-record-read-rate|sink-record-send-rate|sink-record-active-count|put-batch-avg-time-ms|offset-commit-avg-time-ms)"
+    name: "kafka_connect_sink_$3"
     labels:
       connector: "$1"
       task: "$2"
+    help: "Kafka Connect sink metric $3"
+    type: GAUGE
 
-  # Source: poll rate
-  - pattern: "kafka.connect<type=source-task-metrics, connector=(.+), task=(.+)><>source-record-poll-rate"
-    name: kafka_connect_source_record_poll_rate
+  # ─── Kafka Consumer Fetch Metrics ──────────────────────────────────
+  - pattern: "kafka.consumer<type=consumer-fetch-manager-metrics, client-id=(.+)><>(records-consumed-rate|records-lag-max|fetch-rate|fetch-latency-avg)"
+    name: "kafka_consumer_$2"
     labels:
-      connector: "$1"
-      task: "$2"
+      client_id: "$1"
+    help: "Kafka consumer metric $2"
+    type: GAUGE
 
-  # JVM
-  - pattern: "java.lang<type=Memory><>HeapMemoryUsage.used"
-    name: jvm_memory_heap_used_bytes
-  - pattern: "java.lang<type=Memory><>HeapMemoryUsage.max"
-    name: jvm_memory_heap_max_bytes
-  - pattern: "java.lang<type=GarbageCollector, name=([^>]+)><>CollectionCount"
-    name: jvm_gc_collection_count
+  # ─── JVM Memory ────────────────────────────────────────────────────
+  - pattern: "java.lang<type=Memory><(HeapMemoryUsage|NonHeapMemoryUsage)>(used|committed|max|init)"
+    name: "jvm_memory_$2_bytes"
+    labels:
+      area: "$1"
+    help: "JVM memory $2 in bytes"
+    type: GAUGE
+
+  # ─── JVM GC ────────────────────────────────────────────────────────
+  - pattern: "java.lang<type=GarbageCollector, name=(.+)><>(CollectionCount|CollectionTime)"
+    name: "jvm_gc_$2"
     labels:
       gc: "$1"
+    help: "JVM GC metric $2"
+    type: COUNTER
+
+  # ─── JVM Threads ──────────────────────────────────────────────────
+  - pattern: "java.lang<type=Threading><>(ThreadCount|PeakThreadCount|DaemonThreadCount)"
+    name: "jvm_threads_$1"
+    help: "JVM thread metric $1"
+    type: GAUGE
+
+  # ─── Generic catch-all for remaining kafka metrics ────────────────
+  - pattern: "kafka.(.*)<type=(.*), name=(.*)><>(.*)"
+    name: "kafka_$1_$2_$3_$4"
+    help: "Kafka metric $1 $2 $3 $4"
+    type: GAUGE

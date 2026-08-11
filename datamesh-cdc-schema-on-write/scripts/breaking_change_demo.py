@@ -1,281 +1,377 @@
 #!/usr/bin/env python3
 """
-Breaking Change Demo — Schema Evolution Failure
-================================================
-
-Simulates a breaking schema change (DROP COLUMN) on the source database
-and demonstrates how the CDC pipeline detects and alerts on the failure.
+CDC Breaking Change Demo — Simulate a breaking schema change and watch the pipeline FAIL.
 
 Usage:
-    python scripts/breaking_change_demo.py --table orders --column total_amount
-    python scripts/breaking_change_demo.py --table customers --column email
-
-What happens:
-    1. Shows current connector status (all RUNNING)
-    2. Generates some data to establish baseline
-    3. Executes ALTER TABLE ... DROP COLUMN (breaking change!)
-    4. Generates new data (insert fails due to schema mismatch)
-    5. Monitors connector status — shows FAILED state
-    6. Shows Prometheus alert firing (CDC_Connector_Down)
-    7. Restores column and restarts connector (recovery)
-
-Requirements:
-    - All containers running (make up)
-    - Prometheus scraping Kafka Connect JMX (:7071)
+    python breaking_change_demo.py --table orders --column total_amount
+    python breaking_change_demo.py --table customers --column email
 """
 
 import argparse
+import json
 import subprocess
 import sys
 import time
 import urllib.request
-import json
+import urllib.error
+
+import psycopg2
+
+# ─── Config ──────────────────────────────────────────────────────────
+
+CONNECTORS = {
+    "orders": {
+        "db": {"host": "localhost", "port": 5432, "user": "postgres", "password": "postgres", "dbname": "orders_db"},
+        "connector": "orders-cdc-connector",
+        "sink": "orders-jdbc-sink",
+        "topic": "orders-server.public.orders",
+        "dwh_table": "raw.orders_cdc",
+        "insert_cols": "customer_id, total_amount, status",
+        "insert_vals": "(1, 999.99, 'completed')",
+        "insert_cols_after_drop": "customer_id, status",
+        "insert_vals_after_drop": "(1, 'completed')",
+    },
+    "customers": {
+        "db": {"host": "localhost", "port": 5433, "user": "postgres", "password": "postgres", "dbname": "customers_db"},
+        "connector": "customers-cdc-connector",
+        "sink": "customers-jdbc-sink",
+        "topic": "customers-server.public.customers",
+        "dwh_table": "raw.customers_cdc",
+        "insert_cols": "full_name, email, country",
+        "insert_vals": "('Test User', 'test@demo.com', 'US')",
+        "insert_cols_after_drop": "full_name, country",
+        "insert_vals_after_drop": "('Test User', 'US')",
+    },
+}
 
 KAFKA_CONNECT_URL = "http://localhost:8083"
 PROMETHEUS_URL = "http://localhost:9090"
 
+# ─── Helpers ─────────────────────────────────────────────────────────
 
-class Colors:
-    HEADER = "\033[95m"
-    OKBLUE = "\033[94m"
-    OKCYAN = "\033[96m"
-    OKGREEN = "\033[92m"
-    WARNING = "\033[93m"
-    FAIL = "\033[91m"
-    BOLD = "\033[1m"
-    END = "\033[0m"
+def log_step(title):
+    print()
+    print("=" * 70)
+    print(f"  {title}")
+    print("=" * 70)
 
+def pg_conn(cfg):
+    return psycopg2.connect(**cfg)
 
-def print_banner():
-    print(f"""
-{Colors.FAIL}{Colors.BOLD}
-   ____  _  _   ___  _   _  ____  ___  _   _ 
-  | __ )| || | / _ \| | | |/ ___|/ _ \| \ | |
-  |  _ \| || || | | | | | | |  _| | | |  \| |
-  | |_) |__   _| |_| | |_| | |_| | |_| | |\  |
-  |____/   |_|  \___/ \___/ \____|\___/|_| \_|
-{Colors.END}
-  {Colors.WARNING}CDC Breaking Change Demo — Watch the pipeline FAIL{Colors.END}
-""")
+def pg_execute(cfg, query, params=None):
+    with pg_conn(cfg) as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            if cur.description:
+                return cur.fetchall()
+            conn.commit()
+            return None
 
-
-def print_section(title):
-    print(f"\n{Colors.BOLD}{'='*70}{Colors.END}")
-    print(f"{Colors.OKBLUE}{title:^70}{Colors.END}")
-    print(f"{Colors.BOLD}{'='*70}{Colors.END}")
-
+def connect_api(method, path, data=None):
+    url = f"{KAFKA_CONNECT_URL}{path}"
+    req = urllib.request.Request(url, method=method)
+    if data:
+        req.add_header("Content-Type", "application/json")
+        req.data = json.dumps(data).encode("utf-8")
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.status, resp.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8")
 
 def get_connector_status(name):
-    try:
-        req = urllib.request.Request(f"{KAFKA_CONNECT_URL}/connectors/{name}/status")
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            return json.loads(resp.read().decode())
-    except Exception as e:
-        return {"error": str(e)}
-
+    status, body = connect_api("GET", f"/connectors/{name}/status")
+    if status == 200:
+        return json.loads(body)
+    return None
 
 def print_connector_status():
-    connectors = [
-        "orders-cdc-connector",
-        "customers-cdc-connector",
-        "orders-jdbc-sink",
-        "customers-jdbc-sink",
-    ]
-    print(f"\n{Colors.BOLD}Connector Status:{Colors.END}")
-    for name in connectors:
-        status = get_connector_status(name)
-        if "error" in status:
-            print(f"  {name:30s} → {Colors.FAIL}ERROR: {status['error']}{Colors.END}")
+    print("\nConnector Status:")
+    for name in ["orders-cdc-connector", "customers-cdc-connector",
+                 "orders-jdbc-sink", "customers-jdbc-sink"]:
+        st = get_connector_status(name)
+        if st:
+            cstate = st.get("connector", {}).get("state", "UNKNOWN")
+            print(f"  {name:30s} → {cstate}")
+            for t in st.get("tasks", []):
+                tstate = t.get("state", "UNKNOWN")
+                terr = t.get("trace", "")
+                print(f"    {t.get('id','task-0')} → {tstate}")
+                if terr and tstate == "FAILED":
+                    short = terr.replace("\n", " ")[:200]
+                    print(f'      Error: "{short}..."')
         else:
-            state = status.get("connector", {}).get("state", "UNKNOWN")
-            color = Colors.OKGREEN if state == "RUNNING" else Colors.FAIL if state == "FAILED" else Colors.WARNING
-            print(f"  {name:30s} → {color}{state}{Colors.END}")
-            # Check tasks
-            for task in status.get("tasks", []):
-                t_state = task.get("state", "UNKNOWN")
-                t_color = Colors.OKGREEN if t_state == "RUNNING" else Colors.FAIL if t_state == "FAILED" else Colors.WARNING
-                print(f"    task-{task.get('id', '?')} → {t_color}{t_state}{Colors.END}")
+            print(f"  {name:30s} → NOT FOUND")
 
-
-def check_prometheus_alert():
-    """Check if CDC_Connector_Down alert is firing."""
+def check_prometheus_alert(alert_name, connector_label=None):
     try:
-        req = urllib.request.Request(
-            f"{PROMETHEUS_URL}/api/v1/alerts"
-        )
+        req = urllib.request.Request(f"{PROMETHEUS_URL}/api/v1/alerts")
         with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
+            data = json.loads(resp.read().decode("utf-8"))
             alerts = data.get("data", {}).get("alerts", [])
-            cdc_alerts = [a for a in alerts if "CDC_Connector_Down" in a.get("labels", {}).get("alertname", "")]
-            return cdc_alerts
+            firing = []
+            for a in alerts:
+                if a.get("state") != "firing":
+                    continue
+                labels = a.get("labels", {})
+                if labels.get("alertname") == alert_name:
+                    if connector_label is None or labels.get("connector") == connector_label:
+                        firing.append(a)
+            return firing
     except Exception as e:
-        print(f"{Colors.WARNING}Could not query Prometheus: {e}{Colors.END}")
+        print(f"  ⚠ Could not query Prometheus: {e}")
         return []
 
-
-def get_table_columns(db, table):
-    result = subprocess.run(
-        ["docker", "exec", f"postgres-{db}", "psql", "-U", "postgres", "-d", f"{db}_db", "-c",
-         f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table}' ORDER BY ordinal_position;"],
-        capture_output=True, text=True, timeout=10,
-    )
-    return result.stdout
-
-
-def drop_column(db, table, column):
-    print(f"\n{Colors.FAIL}{Colors.BOLD}>>> EXECUTING BREAKING CHANGE:{Colors.END}")
-    print(f"{Colors.FAIL}    ALTER TABLE {table} DROP COLUMN {column};{Colors.END}\n")
-    result = subprocess.run(
-        ["docker", "exec", f"postgres-{db}", "psql", "-U", "postgres", "-d", f"{db}_db", "-c",
-         f"ALTER TABLE {table} DROP COLUMN {column};"],
-        capture_output=True, text=True, timeout=10,
-    )
-    if result.returncode == 0:
-        print(f"{Colors.OKGREEN}✓ Column dropped successfully{Colors.END}")
+def docker_exec(cmd, capture=True):
+    """Run a command inside the kafka container."""
+    full = ["docker", "exec", "kafka"] + cmd
+    if capture:
+        result = subprocess.run(full, capture_output=True, text=True)
+        return result.stdout, result.stderr, result.returncode
     else:
-        print(f"{Colors.FAIL}✗ Error: {result.stderr}{Colors.END}")
-        sys.exit(1)
+        subprocess.run(full)
+        return "", "", 0
 
-
-def add_column_back(db, table, column, col_type):
-    print(f"\n{Colors.OKCYAN}>>> RESTORING COLUMN:{Colors.END}")
-    print(f"{Colors.OKCYAN}    ALTER TABLE {table} ADD COLUMN {column} {col_type};{Colors.END}\n")
-    result = subprocess.run(
-        ["docker", "exec", f"postgres-{db}", "psql", "-U", "postgres", "-d", f"{db}_db", "-c",
-         f"ALTER TABLE {table} ADD COLUMN {column} {col_type};"],
-        capture_output=True, text=True, timeout=10,
-    )
-    if result.returncode == 0:
-        print(f"{Colors.OKGREEN}✓ Column restored{Colors.END}")
+def delete_kafka_topic(topic):
+    """Delete and recreate a Kafka topic to purge bad messages."""
+    print(f">>> Deleting Kafka topic: {topic}")
+    out, err, rc = docker_exec([
+        "kafka-topics", "--bootstrap-server", "localhost:29092",
+        "--delete", "--topic", topic
+    ])
+    if rc == 0 or "does not exist" in err.lower():
+        print(f"✓ Topic {topic} deleted (or did not exist)")
     else:
-        print(f"{Colors.FAIL}✗ Error: {result.stderr}{Colors.END}")
+        print(f"⚠ Could not delete topic: {err.strip() or out.strip()}")
+    time.sleep(2)
 
-
-def insert_test_data(db, table):
-    print(f"\n{Colors.OKCYAN}>>> Inserting test data into {db}.{table}...{Colors.END}")
-    if table == "orders":
-        result = subprocess.run(
-            ["docker", "exec", f"postgres-{db}", "psql", "-U", "postgres", "-d", f"{db}_db", "-c",
-             "INSERT INTO orders (customer_id, total_amount, status) VALUES (1, 999.99, 'pending') RETURNING id;"],
-            capture_output=True, text=True, timeout=10,
-        )
+def delete_connector(name):
+    """DELETE a connector from Kafka Connect."""
+    print(f">>> Deleting connector: {name}")
+    status, body = connect_api("DELETE", f"/connectors/{name}")
+    if status in (200, 204, 404):
+        print(f"✓ Connector {name} deleted")
     else:
-        result = subprocess.run(
-            ["docker", "exec", f"postgres-{db}", "psql", "-U", "postgres", "-d", f"{db}_db", "-c",
-             "INSERT INTO customers (email, full_name, country) VALUES ('test@demo.com', 'Test User', 'US') RETURNING id;"],
-            capture_output=True, text=True, timeout=10,
-        )
-    if result.returncode == 0:
-        print(f"{Colors.OKGREEN}✓ Insert successful:{Colors.END} {result.stdout.strip()}")
+        print(f"⚠ Could not delete connector: HTTP {status}")
+    time.sleep(1)
+
+def recreate_sink_connector(table, topic):
+    """Recreate the JDBC sink connector so it starts fresh."""
+    sink_name = f"{table}-jdbc-sink"
+    dwh_table = CONNECTORS[table]["dwh_table"]
+
+    config = {
+        "name": sink_name,
+        "config": {
+            "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+            "tasks.max": "1",
+            "topics": topic,
+            "connection.url": "jdbc:postgresql://postgres-dwh:5432/datamesh_dwh",
+            "connection.user": "dwh",
+            "connection.password": "dwh",
+            "auto.create": "true",
+            "auto.evolve": "true",
+            "insert.mode": "upsert",
+            "pk.mode": "record_key",
+            "pk.fields": "id",
+            "delete.enabled": "true",
+            "table.name.format": dwh_table,
+            "value.converter": "io.confluent.connect.avro.AvroConverter",
+            "value.converter.schema.registry.url": "http://schema-registry:8081",
+            "key.converter": "io.confluent.connect.avro.AvroConverter",
+            "key.converter.schema.registry.url": "http://schema-registry:8081"
+        }
+    }
+
+    print(f">>> Recreating sink connector: {sink_name}")
+    status, body = connect_api("POST", "/connectors", config)
+    if status == 201:
+        print(f"✓ Sink connector {sink_name} recreated")
     else:
-        print(f"{Colors.FAIL}✗ Insert FAILED (expected after breaking change):{Colors.END}")
-        print(f"   {result.stderr.strip()}")
-    return result.returncode == 0
+        print(f"⚠ Failed to recreate sink: HTTP {status} — {body}")
 
-
-def restart_connector(name):
-    print(f"\n{Colors.OKCYAN}>>> Restarting connector: {name}{Colors.END}")
-    try:
-        req = urllib.request.Request(
-            f"{KAFKA_CONNECT_URL}/connectors/{name}/restart?includeTasks=true&onlyFailed=true",
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            print(f"{Colors.OKGREEN}✓ Restart triggered (HTTP {resp.status}){Colors.END}")
-    except Exception as e:
-        print(f"{Colors.WARNING}⚠ Restart failed: {e}{Colors.END}")
-
+# ─── Main ────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="CDC Breaking Change Demo")
-    parser.add_argument("--table", "-t", required=True, choices=["orders", "customers"],
-                        help="Table to break")
-    parser.add_argument("--column", "-c", required=True,
-                        help="Column to drop (breaking change)")
-    parser.add_argument("--no-restore", action="store_true",
-                        help="Skip column restoration (manual cleanup needed)")
-    parser.add_argument("--wait", "-w", type=int, default=30,
-                        help="Seconds to wait for alert to fire (default: 30)")
-
+    parser.add_argument("--table", required=True, choices=["orders", "customers"])
+    parser.add_argument("--column", required=True, help="Column to drop")
     args = parser.parse_args()
 
-    db = args.table  # orders -> postgres-orders, customers -> postgres-customers
-    table = args.table
-    column = args.column
-    col_type = "DECIMAL(12,2)" if table == "orders" and column == "total_amount" else "VARCHAR(255)"
+    cfg = CONNECTORS[args.table]
+    col = args.column
 
-    print_banner()
-
-    # Step 1: Baseline
-    print_section("STEP 1: BASELINE — All connectors healthy")
+    # ── Step 1: Baseline ──────────────────────────────────────────────
+    log_step("STEP 1: BASELINE — All connectors healthy")
     print_connector_status()
 
-    # Step 2: Show current schema
-    print_section(f"STEP 2: Current schema of {table}")
-    print(get_table_columns(db, table))
+    # ── Step 2: Schema ──────────────────────────────────────────────
+    log_step(f"STEP 2: Current schema of {args.table}")
+    rows = pg_execute(cfg["db"], f"""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = '{args.table}' AND table_schema = 'public'
+        ORDER BY ordinal_position
+    """)
+    for r in rows:
+        print(f"  {r[0]}")
 
-    # Step 3: Generate some data
-    print_section("STEP 3: Generate baseline data")
-    insert_test_data(db, table)
-    time.sleep(3)
+    # ── Step 3: Baseline insert ─────────────────────────────────────
+    log_step("STEP 3: Generate baseline data")
+    print(f"\n>>> Inserting into {args.table}...")
+    try:
+        pg_execute(cfg["db"],
+            f"INSERT INTO {args.table} ({cfg['insert_cols']}) VALUES {cfg['insert_vals']}")
+        print("✓ Insert successful")
+    except Exception as e:
+        print(f"✗ Insert failed: {e}")
+    time.sleep(2)
     print_connector_status()
 
-    # Step 4: BREAKING CHANGE
-    print_section(f"STEP 4: BREAKING CHANGE — DROP COLUMN {column}")
-    drop_column(db, table, column)
+    # ── Step 4: BREAKING CHANGE ─────────────────────────────────────
+    log_step(f"STEP 4: BREAKING CHANGE — DROP COLUMN {col}")
+    print(f"\n>>> EXECUTING: ALTER TABLE {args.table} DROP COLUMN {col};")
+    try:
+        pg_execute(cfg["db"], f"ALTER TABLE {args.table} DROP COLUMN {col}")
+        print("✓ Column dropped successfully")
+    except Exception as e:
+        print(f"✗ Failed to drop column: {e}")
+        sys.exit(1)
 
-    # Step 5: Try to insert data (will fail or cause schema mismatch)
-    print_section("STEP 5: Attempt insert after breaking change")
-    success = insert_test_data(db, table)
-    if success:
-        print(f"{Colors.WARNING}⚠ Insert succeeded — Debezium may not have picked up the change yet{Colors.END}")
-    else:
-        print(f"{Colors.OKGREEN}✓ Insert failed as expected — schema mismatch detected{Colors.END}")
+    # ── Step 5: Insert AFTER drop (WITHOUT the dropped column) ───────
+    log_step("STEP 5: Insert after breaking change (schema mismatch)")
+    print(f"\n>>> Inserting into {args.table} WITHOUT column '{col}'...")
+    try:
+        pg_execute(cfg["db"],
+            f"INSERT INTO {args.table} ({cfg['insert_cols_after_drop']}) VALUES {cfg['insert_vals_after_drop']}")
+        print("✓ Insert succeeded at DB level — event written to WAL")
+        print("  (Debezium will now try to serialize with old Avro schema and FAIL)")
+    except Exception as e:
+        print(f"✗ Insert failed: {e}")
+        print("  (This is unexpected — the insert without dropped column should pass)")
 
-    # Step 6: Monitor connector failure
-    print_section("STEP 6: Monitor connector status (should show FAILED)")
-    for i in range(5):
-        print(f"\n{Colors.BOLD}Check {i+1}/5 (waiting 5s)...{Colors.END}")
+    # ── Step 6: Monitor connector (should show FAILED) ──────────────
+    log_step("STEP 6: Monitor connector status (should show FAILED)")
+    failed = False
+    for i in range(1, 7):
+        print(f"\nCheck {i}/6 (waiting 5s)...")
         time.sleep(5)
+        st = get_connector_status(cfg["connector"])
+        if st:
+            cstate = st.get("connector", {}).get("state", "UNKNOWN")
+            tasks = st.get("tasks", [])
+            tstate = tasks[0].get("state", "UNKNOWN") if tasks else "UNKNOWN"
+            print(f"  {cfg['connector']}: connector={cstate}, task={tstate}")
+            if tstate == "FAILED" or cstate == "FAILED":
+                failed = True
+                print_connector_status()
+                break
+        else:
+            print("  Could not fetch status")
+
+    if not failed:
+        print("\n⚠ Source connector did not fail within 30s.")
+        print("  Checking if SINK connector failed instead...")
+        st = get_connector_status(cfg["sink"])
+        if st:
+            for t in st.get("tasks", []):
+                if t.get("state") == "FAILED":
+                    failed = True
+                    print(f"  ✓ SINK connector {cfg['sink']} is FAILED (expected)")
+                    print_connector_status()
+                    break
+
+    if not failed:
+        print("\n⚠ Neither source nor sink connector failed.")
+        print("  This can happen if Debezium has not yet processed the WAL entry.")
+        print("  The pipeline may still fail on the next poll cycle.")
         print_connector_status()
 
-    # Step 7: Check Prometheus alert
-    print_section("STEP 7: Check Prometheus alerts")
-    alerts = check_prometheus_alert()
+    # ── Step 7: Prometheus alerts ─────────────────────────────────────
+    log_step("STEP 7: Check Prometheus alerts")
+    alerts = check_prometheus_alert("CDC_ConnectorTaskFailed", cfg["connector"])
     if alerts:
-        print(f"{Colors.FAIL}{Colors.BOLD}🚨 ALERT FIRING!{Colors.END}")
-        for alert in alerts:
-            print(f"  Alert: {alert['labels'].get('alertname')}")
-            print(f"  Connector: {alert['labels'].get('connector', 'N/A')}")
-            print(f"  Severity: {alert['labels'].get('severity')}")
-            print(f"  State: {alert['state']}")
-            print(f"  Description: {alert['annotations'].get('description', 'N/A')[:100]}...")
+        print("\n🚨 ALERT FIRING!")
+        for a in alerts:
+            labels = a.get("labels", {})
+            print(f"  Alert: {labels.get('alertname')}")
+            print(f"  Connector: {labels.get('connector', 'N/A')}")
+            print(f"  Severity: {labels.get('severity', 'N/A')}")
+            print(f"  State: {a.get('state')}")
     else:
-        print(f"{Colors.WARNING}⚠ No CDC_Connector_Down alert firing yet{Colors.END}")
-        print(f"  {Colors.OKCYAN}Check manually:{Colors.END} http://localhost:9090/alerts")
-        print(f"  {Colors.OKCYAN}Or check connector logs:{Colors.END} docker compose logs kafka-connect --tail=50")
+        print("\n⚠ No CDC_ConnectorTaskFailed alert firing yet")
+        print("  Check manually:")
+        print(f"    - Grafana: http://localhost:3000/alerting/list")
+        print(f"    - Prometheus: http://localhost:9090/alerts")
+        print(f"    - Connector logs: docker compose logs kafka-connect --tail=50")
 
-    # Step 8: Recovery (optional)
-    if not args.no_restore:
-        print_section("STEP 8: RECOVERY — Restore column and restart connector")
-        add_column_back(db, table, column, col_type)
-        restart_connector(f"{table}-cdc-connector")
-        restart_connector(f"{table}-jdbc-sink")
-        print(f"\n{Colors.OKCYAN}Waiting 10s for recovery...{Colors.END}")
-        time.sleep(10)
-        print_connector_status()
-        print(f"\n{Colors.OKGREEN}{Colors.BOLD}✓ Demo complete. Pipeline restored.{Colors.END}")
+    # ── Step 8: Recovery ────────────────────────────────────────────
+    log_step("STEP 8: RECOVERY — Restore column, clean Kafka, recreate sink")
+
+    # 8a. Restore column
+    print(f"\n>>> RESTORING COLUMN:")
+    print(f"    ALTER TABLE {args.table} ADD COLUMN {col} DECIMAL(12,2);")
+    try:
+        pg_execute(cfg["db"], f"ALTER TABLE {args.table} ADD COLUMN {col} DECIMAL(12,2)")
+        print("✓ Column restored")
+    except Exception as e:
+        print(f"✗ Failed to restore column: {e}")
+
+    # 8b. Delete bad messages from Kafka topic
+    print(f"\n>>> CLEANUP: Removing bad messages from Kafka topic {cfg['topic']}")
+    delete_kafka_topic(cfg["topic"])
+
+    # 8c. Drop the corrupted DWH table so sink recreates it cleanly
+    print(f">>> CLEANUP: Dropping corrupted DWH table {cfg['dwh_table']}")
+    try:
+        dwh_cfg = {"host": "localhost", "port": 5434, "user": "dwh", "password": "dwh", "dbname": "datamesh_dwh"}
+        pg_execute(dwh_cfg, f"DROP TABLE IF EXISTS {cfg['dwh_table']}")
+        print(f"✓ Dropped {cfg['dwh_table']}")
+    except Exception as e:
+        print(f"⚠ Could not drop DWH table: {e}")
+
+    # 8d. Restart source connector
+    print(f"\n>>> Restarting source connector: {cfg['connector']}")
+    status, body = connect_api("POST", f"/connectors/{cfg['connector']}/restart?includeTasks=true&onlyFailed=false")
+    if status in (200, 202, 204):
+        print("✓ Source restart triggered")
     else:
-        print_section("STEP 8: RECOVERY SKIPPED")
-        print(f"{Colors.WARNING}Column NOT restored. Manual cleanup required:{Colors.END}")
-        print(f"  docker exec postgres-{db} psql -U postgres -d {db}_db -c \"ALTER TABLE {table} ADD COLUMN {column} {col_type};\"")
-        print(f"  curl -X POST http://localhost:8083/connectors/{table}-cdc-connector/restart?includeTasks=true")
+        print(f"✗ Source restart failed: HTTP {status} — {body}")
 
-    print(f"\n{Colors.BOLD}{'='*70}{Colors.END}")
-    print(f"{Colors.OKCYAN}Grafana Alert Dashboard:{Colors.END} http://localhost:3000")
-    print(f"{Colors.OKCYAN}Prometheus Alerts:{Colors.END}      http://localhost:9090/alerts")
-    print(f"{Colors.OKCYAN}Kafka Connect REST:{Colors.END}   http://localhost:8083/connectors")
+    # 8e. Delete and recreate sink connector
+    print(f"\n>>> Recreating sink connector: {cfg['sink']}")
+    delete_connector(cfg["sink"])
+    time.sleep(2)
+    recreate_sink_connector(args.table, cfg["topic"])
 
+    print("\nWaiting 10s for recovery...")
+    time.sleep(10)
+    print_connector_status()
+
+    # 8f. Verify with clean insert
+    print(f"\n>>> Verifying with clean insert...")
+    try:
+        pg_execute(cfg["db"],
+            f"INSERT INTO {args.table} ({cfg['insert_cols']}) VALUES {cfg['insert_vals']}")
+        print("✓ Clean insert successful")
+    except Exception as e:
+        print(f"✗ Clean insert failed: {e}")
+
+    time.sleep(5)
+    print_connector_status()
+
+    # 8g. Final verification
+    print(f"\n>>> Final data verification...")
+    time.sleep(3)
+    try:
+        dwh_cfg = {"host": "localhost", "port": 5434, "user": "dwh", "password": "dwh", "dbname": "datamesh_dwh"}
+        rows = pg_execute(dwh_cfg, f"SELECT COUNT(*) FROM {cfg['dwh_table']}")
+        if rows:
+            print(f"✓ DWH table {cfg['dwh_table']}: {rows[0][0]} rows")
+    except Exception as e:
+        print(f"✗ Could not query DWH: {e}")
+
+    print("\n✓ Demo complete. Pipeline restored.")
 
 if __name__ == "__main__":
     main()
