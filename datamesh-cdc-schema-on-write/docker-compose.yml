@@ -14,6 +14,12 @@ services:
       - ./scripts/init_orders.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - datamesh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d orders_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   postgres-customers:
     image: debezium/postgres:15-alpine
@@ -29,6 +35,12 @@ services:
       - ./scripts/init_customers.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - datamesh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d customers_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   # ==================== DWH (TARGET FOR DBT) ====================
   postgres-dwh:
@@ -50,6 +62,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
   # ==================== KAFKA (KRaft) ====================
   kafka:
@@ -93,7 +106,14 @@ services:
       SCHEMA_REGISTRY_HOST_NAME: schema-registry
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:29092
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/subjects || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     networks:
       - datamesh
 
@@ -105,7 +125,7 @@ services:
     container_name: kafka-connect
     ports:
       - "8083:8083"
-      - "7071:7071"   # NEW: JMX Exporter
+      - "7071:7071"
     environment:
       CONNECT_BOOTSTRAP_SERVERS: kafka:29092
       CONNECT_GROUP_ID: connect-cluster
@@ -121,21 +141,45 @@ services:
       CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
       CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
       CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
-      # NEW: JMX Exporter agent
       KAFKA_OPTS: "-javaagent:/usr/share/jmx_exporter/jmx_prometheus_javaagent.jar=7071:/usr/share/jmx_exporter/config.yml"
     volumes:
       - ./prometheus/jmx_exporter_config.yml:/usr/share/jmx_exporter/config.yml:ro
+      - connect_plugins:/usr/share/confluent-hub-components
     depends_on:
       kafka:
         condition: service_healthy
       schema-registry:
-        condition: service_started
+        condition: service_healthy
       postgres-orders:
-        condition: service_started
+        condition: service_healthy
       postgres-customers:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 40s
     networks:
       - datamesh
+
+  # ==================== CONNECTOR SETUP (one-shot) ====================
+  setup-connectors:
+    image: curlimages/curl:latest
+    container_name: setup-connectors
+    volumes:
+      - ./scripts/setup-connectors.sh:/setup-connectors.sh:ro
+    environment:
+      KAFKA_CONNECT_URL: http://kafka-connect:8083
+      MAX_RETRIES: "60"
+      SLEEP_SEC: "2"
+    entrypoint: ["/bin/sh", "/setup-connectors.sh"]
+    depends_on:
+      kafka-connect:
+        condition: service_healthy
+    networks:
+      - datamesh
+    restart: "no"
 
   # ==================== MONITORING ====================
   prometheus:
@@ -157,7 +201,8 @@ services:
     ports:
       - "9187:9187"
     depends_on:
-      - postgres-dwh
+      postgres-dwh:
+        condition: service_healthy
     networks:
       - datamesh
 
@@ -179,7 +224,6 @@ services:
       - grafana_data:/var/lib/grafana
     depends_on:
       - prometheus
-      - postgres-dwh
     networks:
       - datamesh
 
@@ -194,3 +238,4 @@ volumes:
   postgres_dwh_data:
   kafka_data:
   grafana_data:
+  connect_plugins:

@@ -1,30 +1,73 @@
 #!/bin/bash
+set -euo pipefail
 
-set -e
+KAFKA_CONNECT_URL="${KAFKA_CONNECT_URL:-http://localhost:8083}"
+MAX_RETRIES="${MAX_RETRIES:-30}"
+SLEEP_SEC="${SLEEP_SEC:-2}"
 
-KAFKA_CONNECT_URL="http://localhost:8083"
+# ─── Helpers ──────────────────────────────────────────────────────────
 
-function wait_for_connect() {
-    echo "Waiting for Kafka Connect..."
-    until curl -s "$KAFKA_CONNECT_URL/" | grep -q "version"; do
-        sleep 2
+log_info()  { echo "[INFO]  $*"; }
+log_warn()  { echo "[WARN]  $*"; }
+log_error() { echo "[ERROR] $*"; }
+
+wait_for_connect() {
+    log_info "Waiting for Kafka Connect at ${KAFKA_CONNECT_URL} ..."
+    local i=0
+    until curl -sf "${KAFKA_CONNECT_URL}/" >/dev/null 2>&1; do
+        i=$((i + 1))
+        if [[ $i -ge $MAX_RETRIES ]]; then
+            log_error "Kafka Connect did not become ready after ${MAX_RETRIES} attempts"
+            exit 1
+        fi
+        sleep "${SLEEP_SEC}"
     done
-    echo "Kafka Connect is up."
+    log_info "Kafka Connect is ready."
 }
 
-function register_connector() {
+connector_exists() {
+    local name=$1
+    local code
+    code=$(curl -s -o /dev/null -w "%{http_code}" "${KAFKA_CONNECT_URL}/connectors/${name}")
+    [[ "$code" == "200" ]]
+}
+
+register_connector() {
     local name=$1
     local config=$2
 
-    echo "Registering connector: $name"
-    curl -s -X POST "$KAFKA_CONNECT_URL/connectors"         -H "Content-Type: application/json"         -d "$config" || echo "Connector $name may already exist"
+    if connector_exists "$name"; then
+        log_warn "Connector '${name}' already exists — skipping."
+        return 0
+    fi
+
+    log_info "Registering connector: ${name}"
+    local http_code body
+    body=$(curl -s -w "\n%{http_code}" \
+        -X POST "${KAFKA_CONNECT_URL}/connectors" \
+        -H "Content-Type: application/json" \
+        -d "$config")
+
+    http_code=$(echo "$body" | tail -n1)
+    body=$(echo "$body" | sed '$d')
+
+    if [[ "$http_code" == "201" ]]; then
+        log_info "Connector '${name}' registered successfully."
+    elif [[ "$http_code" == "409" ]]; then
+        log_warn "Connector '${name}' conflict (already exists)."
+    else
+        log_error "Failed to register '${name}' (HTTP ${http_code}): ${body}"
+        return 1
+    fi
 }
+
+# ─── Main ─────────────────────────────────────────────────────────────
 
 wait_for_connect
 
 # ==================== SOURCE CONNECTORS ====================
 
-echo "Registering source connectors..."
+log_info "Registering source connectors..."
 
 register_connector "orders-cdc-connector" '{
   "name": "orders-cdc-connector",
@@ -38,7 +81,7 @@ register_connector "orders-cdc-connector" '{
     "topic.prefix": "orders-server",
     "table.include.list": "public.orders",
     "plugin.name": "pgoutput",
-    "slot.name": "debezium",
+    "slot.name": "debezium_orders",
     "publication.name": "dbz_publication",
     "key.converter": "io.confluent.connect.avro.AvroConverter",
     "key.converter.schema.registry.url": "http://schema-registry:8081",
@@ -50,7 +93,8 @@ register_connector "orders-cdc-connector" '{
     "transforms.unwrap.delete.handling.mode": "rewrite",
     "snapshot.mode": "initial",
     "tombstones.on.delete": "true",
-    "decimal.handling.mode": "string"
+    "decimal.handling.mode": "string",
+    "delete.enabled": "true"
   }
 }'
 
@@ -66,7 +110,7 @@ register_connector "customers-cdc-connector" '{
     "topic.prefix": "customers-server",
     "table.include.list": "public.customers",
     "plugin.name": "pgoutput",
-    "slot.name": "debezium",
+    "slot.name": "debezium_customers",
     "publication.name": "dbz_publication",
     "key.converter": "io.confluent.connect.avro.AvroConverter",
     "key.converter.schema.registry.url": "http://schema-registry:8081",
@@ -78,13 +122,14 @@ register_connector "customers-cdc-connector" '{
     "transforms.unwrap.delete.handling.mode": "rewrite",
     "snapshot.mode": "initial",
     "tombstones.on.delete": "true",
-    "decimal.handling.mode": "string"
+    "decimal.handling.mode": "string",
+    "delete.enabled": "true"
   }
 }'
 
 # ==================== SINK CONNECTORS ====================
 
-echo "Registering JDBC sink connectors..."
+log_info "Registering JDBC sink connectors..."
 
 register_connector "orders-jdbc-sink" '{
   "name": "orders-jdbc-sink",
@@ -100,6 +145,7 @@ register_connector "orders-jdbc-sink" '{
     "insert.mode": "upsert",
     "pk.mode": "record_key",
     "pk.fields": "id",
+    "delete.enabled": "true",
     "table.name.format": "raw.orders_cdc",
     "value.converter": "io.confluent.connect.avro.AvroConverter",
     "value.converter.schema.registry.url": "http://schema-registry:8081",
@@ -122,6 +168,7 @@ register_connector "customers-jdbc-sink" '{
     "insert.mode": "upsert",
     "pk.mode": "record_key",
     "pk.fields": "id",
+    "delete.enabled": "true",
     "table.name.format": "raw.customers_cdc",
     "value.converter": "io.confluent.connect.avro.AvroConverter",
     "value.converter.schema.registry.url": "http://schema-registry:8081",
@@ -130,7 +177,6 @@ register_connector "customers-jdbc-sink" '{
   }
 }'
 
-echo "Done! All connectors registered."
-echo ""
-echo "Active connectors:"
-curl -s "$KAFKA_CONNECT_URL/connectors" | jq .
+log_info "Done! Active connectors:"
+curl -s "${KAFKA_CONNECT_URL}/connectors" | python3 -m json.tool 2>/dev/null || curl -s "${KAFKA_CONNECT_URL}/connectors"
+echo

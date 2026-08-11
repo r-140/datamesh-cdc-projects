@@ -20,23 +20,22 @@ PostgreSQL (Domain)
 ## Quick Start
 
 ```bash
-# 1. Install
+# 1. Install Python dependencies
 python3 -m venv venv
 source venv/bin/activate
 pip install -e ".[dev]"
 
-# 2. Start all infrastructure
+# 2. Start all infrastructure (connectors auto-register via Docker Compose)
 make up
 
-# 3. Verify connectors registered automatically
-make connectors
+# 3. Verify connectors are active
+make connectors          # idempotent — safe to run multiple times
 
 # 4. Run end-to-end demo
 python scripts/run_demo.py
 
 # 5. Generate live CDC data and watch it flow to DWH
 python scripts/data_generator.py --mode batch --count 20
-python scripts/data_generator.py --mode continuous --interval 3
 
 # 6. Run schema evolution simulation
 make simulate
@@ -46,6 +45,11 @@ make dbt-setup
 make dbt-run
 make dbt-test
 ```
+
+> **Note on persistence:**
+> - `make up` — starts containers and **preserves** existing volumes (Kafka data, Postgres data).
+> - `make down` — stops containers but **keeps** volumes intact.
+> - `make reset` — **destroys** all volumes (`down -v`) and recreates everything from scratch. Use this when you want a clean slate or after `docker compose down -v` wiped your state.
 
 ## Service URLs
 
@@ -60,7 +64,7 @@ make dbt-test
 | Prometheus | http://localhost:9090 | — |
 | Grafana | http://localhost:3000 | `admin` / `admin` |
 
-> **Note**: Trino (`:8080`), Iceberg REST Catalog (`:8181`) and MinIO (`:9000/:9001`) are available when running the extended stack (see `docker-compose.yml` extensions or run the Iceberg-enabled profile).
+> **Note**: Trino (`:8080`), Iceberg REST Catalog (`:8181`) and MinIO (`:9000/:9001`) are available when running the extended stack.
 
 ## Grafana Dashboard
 
@@ -92,6 +96,21 @@ postgres-customers  -> Debezium Source -> Kafka (Avro) -> JDBC Sink -> postgres-
 - **Sink connectors** read Kafka topics and write to DWH via `upsert`
 - `auto.evolve=true` — on schema evolution (ADD COLUMN) the sink automatically adds the column to DWH
 - `auto.create=true` — tables in `raw.*` are created automatically if they don't exist
+
+## Connector Auto-Registration
+
+Connectors are registered automatically in two ways:
+
+1. **Docker Compose (recommended)** — the `setup-connectors` service waits until Kafka Connect is healthy and then runs `scripts/setup-connectors.sh` inside a transient container.
+2. **Manual / Makefile** — run `make connectors` at any time. The script is **idempotent**: existing connectors are skipped, missing ones are created.
+
+```bash
+# Re-register connectors manually (e.g. after changing connector JSON configs)
+make connectors
+
+# Check connector status
+make connectors  # shows active connectors at the end
+```
 
 ## Monitoring & Alerting
 
@@ -305,19 +324,20 @@ ALTER TABLE orders DROP COLUMN total_amount;
 ## Useful Commands
 
 ```bash
-# List connectors
+# ── Lifecycle ──
+make up                 # Start stack, wait for Connect, register connectors
+make down               # Stop stack (preserve volumes)
+make reset              # FULL RESET: destroy volumes + recreate
+make connectors         # Re-run connector registration (idempotent)
+make clean              # Down + remove containers + temp files
+
+# ── Kafka / Connect CLI ──
 curl http://localhost:8083/connectors
-
-# Check connector status
 curl http://localhost:8083/connectors/orders-cdc-connector/status
-
-# List Schema Registry subjects
 curl http://localhost:8081/subjects
-
-# Get latest schema
 curl http://localhost:8081/subjects/orders-server.public.orders-value/versions/latest
 
-# List Kafka topics
+# Kafka topics
 docker exec kafka kafka-topics --bootstrap-server localhost:29092 --list
 
 # Read CDC messages (check offset)
@@ -330,11 +350,9 @@ docker exec kafka kafka-console-consumer \
   --topic orders-server.public.orders \
   --from-beginning
 
-# Live data generation & CDC monitoring
+# ── Data & demos ──
 python scripts/data_generator.py --mode batch --count 20
 python scripts/data_generator.py --mode verify
-
-# Breaking change demo with alerting
 python scripts/breaking_change_demo.py --table orders --column total_amount
 ```
 
@@ -379,20 +397,23 @@ python scripts/breaking_change_demo.py --table orders --column total_amount
 
 ## Troubleshooting
 
-| Problem | Solution |
-|---------|----------|
-| `make: *** No rule to make target 'docker'` | In `Makefile`, ensure the `up:` target has **no dependencies** after the colon. All shell commands must be indented with a **tab**, not spaces. |
-| `relation "customers" does not exist` | Init SQL scripts must be mounted into PostgreSQL containers. Check `docker-compose.yml` volumes: `scripts/init_customers.sql:/docker-entrypoint-initdb.d/init.sql:ro` |
-| `curl: (22) The requested URL returned error: 404` (JDBC) | Do not download JDBC connector as a single JAR. Use `confluent-hub install --no-prompt confluentinc/kafka-connect-jdbc:10.7.6` in the Dockerfile. |
-| `JdbcSinkConnector` not in connector-plugins | The JDBC plugin is missing from the Kafka Connect image. Rebuild with the updated `kafka-connect/Dockerfile`. |
-| Prometheus not scraping Kafka Connect | Ensure JMX Exporter agent is in Dockerfile and `KAFKA_OPTS` points to it. Check port `7071` is exposed. |
-| Grafana alert not firing | Verify Prometheus is datasource in Grafana. Check alert rule evaluation interval. Test with `curl localhost:9090/api/v1/alerts`. See [GRAFANA_SETUP.md](GRAFANA_SETUP.md). |
-| `prometheus.yml is a directory` | `rm -rf prometheus/prometheus.yml` |
-| MinIO port conflict | `docker rm -f quantum-sim-minio-1` |
-| Kafka `CLUSTER_ID` invalid | Use base64 UUID: `ela4zpktSX2SmBDlE9FJjA==` |
-| Connector `topic.prefix` required | Replace `database.server.name` (Debezium 2.x) |
-| `SchemaType` import error | Use `Schema(schema_str, schema_type='AVRO')` |
-| `CompatibilityLevel` not serializable | Add `default=lambda o: o.value` to json.dumps |
+| Problem | Cause | Solution |
+|---------|-------|----------|
+| `make up` hangs on "Waiting for Kafka Connect" | Connect hasn't finished starting | Wait up to 2 min on first run (JAR download + plugin init). Check `docker logs kafka-connect`. |
+| `Connector X may already exist` / 409 | Script is idempotent | Not an error. Run `make connectors` again safely. |
+| `curl: (22) The requested URL returned error: 400` on connector registration | Invalid JSON in connector config | Check `scripts/setup-connectors.sh` for trailing commas or duplicate keys. |
+| `JdbcSinkConnector` not in connector-plugins | JDBC plugin missing from image | Rebuild: `docker compose build kafka-connect`. Ensure `confluent-hub install` is in `kafka-connect/Dockerfile`. |
+| Connectors disappear after `make down` | Expected — connectors live in Kafka topics (`connect-configs`, `connect-offsets`, `connect-status`). These topics survive `make down` because volumes persist. | Run `make connectors` to re-register, or use `make reset` if you want a clean start. |
+| Connectors disappear after `make reset` | `down -v` wipes Kafka data including Connect internal topics | Run `make up` — the `setup-connectors` service will auto-register them. |
+| `relation "customers" does not exist` | Init SQL scripts not mounted | Check `docker-compose.yml` volumes: `scripts/init_customers.sql:/docker-entrypoint-initdb.d/init.sql:ro` |
+| Prometheus not scraping Kafka Connect | JMX Exporter agent missing or `KAFKA_OPTS` misconfigured | Verify `kafka-connect/Dockerfile` includes the JAR and `KAFKA_OPTS` points to it. Check port `7071`. |
+| Grafana alert not firing | Datasource or alert rule issue | Verify Prometheus is datasource in Grafana. Check alert rule evaluation interval. Test with `curl localhost:9090/api/v1/alerts`. See [GRAFANA_SETUP.md](GRAFANA_SETUP.md). |
+| `prometheus.yml is a directory` | File/directory name collision | `rm -rf prometheus/prometheus.yml` |
+| MinIO port conflict | Existing container on port | `docker rm -f quantum-sim-minio-1` |
+| Kafka `CLUSTER_ID` invalid | Wrong format | Use base64 UUID: `MkU3OEVBNTYwNTUENDI2Qg` |
+| Connector `topic.prefix` required | Debezium 2.x uses `topic.prefix` instead of `database.server.name` | Already set in `setup-connectors.sh`. |
+| `SchemaType` import error | API change in confluent-kafka | Use `Schema(schema_str, schema_type='AVRO')` |
+| `CompatibilityLevel` not serializable | Enum serialization issue | Add `default=lambda o: o.value` to `json.dumps` |
 
 ## When to Use This Approach
 
