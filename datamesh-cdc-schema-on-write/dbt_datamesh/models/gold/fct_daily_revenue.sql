@@ -4,8 +4,8 @@
 ) }}
 
 SELECT
-    order_date,
+    DATE(created_at) AS order_date,
     COUNT(*) AS order_count,
     SUM(total_amount) AS total_revenue
 FROM {{ ref('slv_orders') }}
-GROUP BY order_date
+GROUP BY DATE(created_at)

@@ -4,9 +4,9 @@
 ) }}
 
 SELECT
-    segment,
-    COUNT(DISTINCT customer_id) AS customer_count,
-    MIN(registration_date) AS earliest_registration,
-    MAX(registration_date) AS latest_registration
+    country AS segment,
+    COUNT(*) AS customer_count,
+    MIN(DATE(created_at)) AS earliest_registration,
+    MAX(DATE(created_at)) AS latest_registration
 FROM {{ ref('slv_customers') }}
-GROUP BY segment
+GROUP BY country

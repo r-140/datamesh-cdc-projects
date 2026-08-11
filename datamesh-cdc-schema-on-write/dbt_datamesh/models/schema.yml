@@ -8,6 +8,14 @@ models:
         tests:
           - not_null
           - unique
+      - name: total_amount
+        tests:
+          - not_null
+      - name: status
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['pending', 'completed', 'shipped', 'cancelled', 'refunded']
 
   - name: brz_customers
     schema: raw_bronze
@@ -16,6 +24,9 @@ models:
         tests:
           - not_null
           - unique
+      - name: email
+        tests:
+          - not_null
 
   - name: slv_orders
     schema: raw_silver
@@ -32,7 +43,7 @@ models:
       - name: status
         tests:
           - accepted_values:
-              values: ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled']
+              values: ['pending', 'completed', 'shipped', 'cancelled', 'refunded']
 
   - name: slv_customers
     schema: raw_silver
@@ -54,3 +65,7 @@ models:
 
   - name: dim_customer_segments
     schema: raw_gold
+    columns:
+      - name: segment
+        tests:
+          - not_null

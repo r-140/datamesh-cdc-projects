@@ -6,8 +6,10 @@
 SELECT
     order_id,
     customer_id,
-    customer_email,
-    status,
     total_amount,
-    order_date
+    status,
+    created_at,
+    updated_at
 FROM {{ ref('brz_orders') }}
+WHERE __deleted IS NULL
+  OR __deleted = 'false'

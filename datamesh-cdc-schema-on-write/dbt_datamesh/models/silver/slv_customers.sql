@@ -5,7 +5,11 @@
 
 SELECT
     customer_id,
-    customer_email,
-    segment,
-    registration_date
+    full_name,
+    email,
+    country,
+    created_at,
+    updated_at
 FROM {{ ref('brz_customers') }}
+WHERE __deleted IS NULL
+  OR __deleted = 'false'

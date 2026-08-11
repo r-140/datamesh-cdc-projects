@@ -4,32 +4,30 @@ sources:
   - name: raw
     schema: raw
     tables:
-      - name: orders
+      - name: orders_cdc
         columns:
           - name: id
             tests:
               - not_null
               - unique
           - name: customer_id
-          - name: customer_email
-          - name: status
-            tests:
-              - not_null
-              - accepted_values:
-                  values: ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled']
           - name: total_amount
-            tests:
-              - not_null
-          - name: order_date
+          - name: status
+          - name: created_at
+          - name: updated_at
+          - name: __deleted
 
-      - name: customers
+      - name: customers_cdc
         columns:
           - name: id
             tests:
               - not_null
               - unique
+          - name: full_name
           - name: email
             tests:
               - not_null
-          - name: segment
-          - name: registration_date
+          - name: country
+          - name: created_at
+          - name: updated_at
+          - name: __deleted
