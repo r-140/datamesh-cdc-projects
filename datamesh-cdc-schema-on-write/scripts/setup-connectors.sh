@@ -61,9 +61,27 @@ register_connector() {
     fi
 }
 
+# ─── Create DLQ topics explicitly ───────────────────────────────────
+
+create_dlq_topic() {
+    local topic=$1
+    log_info "Creating DLQ topic: ${topic}"
+    docker exec kafka kafka-topics \
+        --bootstrap-server localhost:29092 \
+        --create --if-not-exists \
+        --topic "${topic}" \
+        --partitions 1 \
+        --replication-factor 1 2>/dev/null || \
+        log_warn "Could not create topic ${topic} (may already exist)"
+}
+
 # ─── Main ─────────────────────────────────────────────────────────────
 
 wait_for_connect
+
+# Create DLQ topics before registering connectors
+create_dlq_topic "dlq-orders-jdbc-sink"
+create_dlq_topic "dlq-customers-jdbc-sink"
 
 # ==================== SOURCE CONNECTORS ====================
 
@@ -93,7 +111,6 @@ register_connector "orders-cdc-connector" '{
     "transforms.unwrap.delete.handling.mode": "rewrite",
     "snapshot.mode": "initial",
     "tombstones.on.delete": "true",
-    "decimal.handling.mode": "string",
     "delete.enabled": "true"
   }
 }'
@@ -122,14 +139,13 @@ register_connector "customers-cdc-connector" '{
     "transforms.unwrap.delete.handling.mode": "rewrite",
     "snapshot.mode": "initial",
     "tombstones.on.delete": "true",
-    "decimal.handling.mode": "string",
     "delete.enabled": "true"
   }
 }'
 
-# ==================== SINK CONNECTORS ====================
+# ==================== SINK CONNECTORS (with DLQ) ====================
 
-log_info "Registering JDBC sink connectors..."
+log_info "Registering JDBC sink connectors with DLQ..."
 
 register_connector "orders-jdbc-sink" '{
   "name": "orders-jdbc-sink",
@@ -140,8 +156,8 @@ register_connector "orders-jdbc-sink" '{
     "connection.url": "jdbc:postgresql://postgres-dwh:5432/datamesh_dwh",
     "connection.user": "dwh",
     "connection.password": "dwh",
-    "auto.create": "true",
-    "auto.evolve": "true",
+    "auto.create": "false",
+    "auto.evolve": "false",
     "insert.mode": "upsert",
     "pk.mode": "record_key",
     "pk.fields": "id",
@@ -150,7 +166,13 @@ register_connector "orders-jdbc-sink" '{
     "value.converter": "io.confluent.connect.avro.AvroConverter",
     "value.converter.schema.registry.url": "http://schema-registry:8081",
     "key.converter": "io.confluent.connect.avro.AvroConverter",
-    "key.converter.schema.registry.url": "http://schema-registry:8081"
+    "key.converter.schema.registry.url": "http://schema-registry:8081",
+    "errors.tolerance": "all",
+    "errors.deadletterqueue.topic.name": "dlq-orders-jdbc-sink",
+    "errors.deadletterqueue.topic.replication.factor": "1",
+    "errors.deadletterqueue.context.headers.enable": "true",
+    "errors.log.enable": "true",
+    "errors.log.include.messages": "true"
   }
 }'
 
@@ -163,8 +185,8 @@ register_connector "customers-jdbc-sink" '{
     "connection.url": "jdbc:postgresql://postgres-dwh:5432/datamesh_dwh",
     "connection.user": "dwh",
     "connection.password": "dwh",
-    "auto.create": "true",
-    "auto.evolve": "true",
+    "auto.create": "false",
+    "auto.evolve": "false",
     "insert.mode": "upsert",
     "pk.mode": "record_key",
     "pk.fields": "id",
@@ -173,7 +195,13 @@ register_connector "customers-jdbc-sink" '{
     "value.converter": "io.confluent.connect.avro.AvroConverter",
     "value.converter.schema.registry.url": "http://schema-registry:8081",
     "key.converter": "io.confluent.connect.avro.AvroConverter",
-    "key.converter.schema.registry.url": "http://schema-registry:8081"
+    "key.converter.schema.registry.url": "http://schema-registry:8081",
+    "errors.tolerance": "all",
+    "errors.deadletterqueue.topic.name": "dlq-customers-jdbc-sink",
+    "errors.deadletterqueue.topic.replication.factor": "1",
+    "errors.deadletterqueue.context.headers.enable": "true",
+    "errors.log.enable": "true",
+    "errors.log.include.messages": "true"
   }
 }'
 

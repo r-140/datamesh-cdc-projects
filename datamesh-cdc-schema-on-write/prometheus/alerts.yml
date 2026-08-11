@@ -2,7 +2,7 @@ groups:
   - name: cdc_pipeline
     interval: 15s
     rules:
-      # ─── Kafka Connect Down (REST API check via blackbox or JMX) ───
+      # ─── Kafka Connect JMX Down ───────────────────────────────────────
       - alert: KafkaConnectDown
         expr: up{job="kafka-connect-jmx"} == 0
         for: 30s
@@ -12,19 +12,9 @@ groups:
           summary: "Kafka Connect JMX exporter is down"
           description: "Kafka Connect JMX endpoint at {{ $labels.instance }} has been down for more than 30 seconds."
 
-      # ─── CDC Connector Task Failed ───────────────────────────────────
-      - alert: CDC_ConnectorTaskFailed
-        expr: kafka_connect_connector_task_state == 0
-        for: 15s
-        labels:
-          severity: critical
-        annotations:
-          summary: "CDC connector {{ $labels.connector }} task FAILED"
-          description: "Task {{ $labels.task }} of connector {{ $labels.connector }} is not RUNNING."
-
       # ─── CDC High Lag ────────────────────────────────────────────────
       - alert: CDC_HighLag
-        expr: debezium_millisecondssincelastevent > 60000
+        expr: debezium_lag_ms > 60000
         for: 2m
         labels:
           severity: warning
@@ -34,7 +24,7 @@ groups:
 
       # ─── CDC Pipeline Stall (no events) ─────────────────────────────
       - alert: CDC_PipelineStall
-        expr: rate(debezium_totalnumberofeventsseen[5m]) == 0
+        expr: rate(debezium_events_total[5m]) == 0
         for: 5m
         labels:
           severity: warning
@@ -44,7 +34,7 @@ groups:
 
       # ─── CDC Sink Stall ─────────────────────────────────────────────
       - alert: CDC_SinkStall
-        expr: rate(kafka_connect_sink_sink_record_send_rate[2m]) == 0
+        expr: rate(kafka_connect_sink_record_send_rate[2m]) == 0
         for: 2m
         labels:
           severity: warning

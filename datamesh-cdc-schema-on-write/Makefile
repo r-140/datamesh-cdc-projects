@@ -1,4 +1,4 @@
-.PHONY: up down reset connectors wait-connect fix-grafana-perms dbt-setup dbt-run dbt-test simulate test lint clean
+.PHONY: up down reset connectors wait-connect wait-dwh init-dwh fix-grafana-perms dbt-setup dbt-run dbt-test simulate test lint clean
 
 # ─── Docker Compose ───────────────────────────────────────────────────
 
@@ -8,6 +8,7 @@ up: fix-grafana-perms
 	@echo "==> Starting infrastructure (persistent mode)..."
 	$(COMPOSE) up -d --build
 	$(MAKE) wait-connect
+	$(MAKE) init-dwh
 	$(MAKE) connectors
 
 down: fix-grafana-perms
@@ -19,6 +20,26 @@ reset: fix-grafana-perms
 	$(COMPOSE) down -v --remove-orphans
 	-docker rm -f kafka postgres-customers postgres-orders postgres-dwh prometheus grafana schema-registry kafka-connect setup-connectors 2>/dev/null || true
 	$(MAKE) up
+
+# ─── DWH Initialization ───────────────────────────────────────────────
+
+wait-dwh:
+	@echo "==> Waiting for DWH (postgres-dwh) to accept connections..."
+	@for i in $$(seq 1 60); do \
+		if docker exec postgres-dwh pg_isready -U dwh -d datamesh_dwh >/dev/null 2>&1; then \
+			echo "==> DWH is ready."; \
+			exit 0; \
+		fi; \
+		echo "   ...attempt $$i/60, retrying in 2s"; \
+		sleep 2; \
+	done; \
+	echo "==> ERROR: DWH did not become ready in time."; \
+	exit 1
+
+init-dwh: wait-dwh
+	@echo "==> Initializing DWH raw schema..."
+	@docker exec -i postgres-dwh psql -U dwh -d datamesh_dwh -v ON_ERROR_STOP=1 < scripts/init-dwh.sql
+	@echo "==> DWH raw schema initialized."
 
 # ─── Connectors ───────────────────────────────────────────────────────
 
