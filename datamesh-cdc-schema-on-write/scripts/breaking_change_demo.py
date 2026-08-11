@@ -159,16 +159,35 @@ def create_dlq_topic(topic):
         print(f"⚠ Error creating DLQ topic: {e}")
         return False
 
+def get_dlq_offset(topic):
+    """Check DLQ topic offset using GetOffsetShell (reliable, no consumer group issues)."""
+    try:
+        result = subprocess.run(
+            ["docker", "exec", "kafka", "kafka-run-class", "kafka.tools.GetOffsetShell",
+             "--bootstrap-server", "localhost:29092",
+             "--topic", topic],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            line = result.stdout.strip()
+            if ":" in line:
+                # Format: topic:partition:offset
+                return int(line.split(":")[-1])
+    except Exception as e:
+        print(f"  ⚠ Could not check DLQ offset: {e}")
+    return 0
+
 def consume_dlq(topic, max_messages=5):
-    """Read messages from DLQ topic."""
+    """Read messages from DLQ topic using explicit partition/offset (no group offset cache)."""
     try:
         result = subprocess.run(
             ["docker", "exec", "kafka", "kafka-console-consumer",
              "--bootstrap-server", "localhost:29092",
              "--topic", topic,
-             "--from-beginning",
+             "--partition", "0",
+             "--offset", "0",
              "--max-messages", str(max_messages),
-             "--timeout-ms", "5000"],
+             "--property", "print.headers=true"],
             capture_output=True, text=True, timeout=15
         )
         return result.stdout.strip()
@@ -266,26 +285,35 @@ def main():
             print(f"  {cfg['sink']}: connector={cstate}, task={tstate}")
             print(f"  DWH rows: {curr_count} (delta: {curr_count - prev_count})")
 
-            # Check if message landed in DLQ
-            if not dlq_seen and curr_count == prev_count:
-                dlq_content = consume_dlq(cfg["dlq_topic"], 1)
-                if dlq_content and "Error" not in dlq_content:
-                    dlq_seen = True
-                    print(f"\n  ✓ Bad message quarantined in DLQ: {cfg['dlq_topic']}")
-                    print(f"    DLQ content preview: {dlq_content[:200]}...")
+            # Reliable DLQ check via GetOffsetShell (no consumer group cache issues)
+            dlq_offset = get_dlq_offset(cfg["dlq_topic"])
+            if not dlq_seen and dlq_offset > 0:
+                dlq_seen = True
+                print(f"\n  ✓ Bad message quarantined in DLQ: {cfg['dlq_topic']}")
+                print(f"    DLQ current offset: {dlq_offset}")
         prev_count = curr_count
 
     print_connector_status()
 
     # ── Step 7: DLQ Contents ──────────────────────────────────────────
     log_step("STEP 7: DLQ Contents")
-    dlq_content = consume_dlq(cfg["dlq_topic"], 3)
-    if dlq_content and "Error" not in dlq_content:
-        print(f"\n✓ DLQ topic '{cfg['dlq_topic']}' contains quarantined messages:")
-        print(f"  {dlq_content[:500]}...")
+    dlq_offset = get_dlq_offset(cfg["dlq_topic"])
+    if dlq_offset > 0:
+        print(f"\n✓ DLQ topic '{cfg['dlq_topic']}' contains {dlq_offset} quarantined message(s)")
+        dlq_content = consume_dlq(cfg["dlq_topic"], 1)
+        if dlq_content and "Error" not in dlq_content:
+            # Extract error message from headers
+            lines = dlq_content.split("\n")
+            for line in lines:
+                if "__connect.errors.exception.message" in line:
+                    print(f"\n  Error details (from DLQ headers):")
+                    print(f"    {line[:400]}...")
+                    break
+            print(f"\n  Full DLQ message (first 1000 chars):")
+            print(f"  {dlq_content[:1000]}...")
     else:
-        print(f"\n⚠ DLQ topic '{cfg['dlq_topic']}' not found or empty")
-        print("  (May need a few more seconds for Kafka to create the topic)")
+        print(f"\n⚠ DLQ topic '{cfg['dlq_topic']}' is empty")
+        print("  (Bad message may still be processing)")
 
     # ── Step 8: Check Prometheus alerts ─────────────────────────────────────
     log_step("STEP 8: Check Prometheus alerts")
@@ -337,16 +365,16 @@ def main():
 ║  1. DLQ prevents connector crash — pipeline stays RUNNING            ║
 ║  2. Bad messages are quarantined, not lost                           ║
 ║  3. DWH stops growing → alert fires → ops investigates               ║
-║  4. Recovery: fix schema → new data flows automatically            ║
-║  5. DLQ messages can be replayed or analyzed later                 ║
+║  4. Recovery: fix schema → new data flows automatically              ║
+║  5. DLQ messages can be replayed or analyzed later                   ║
 ║                                                                      ║
-║  HOW TO FIX THE BAD MESSAGE IN PROD:                               ║
+║  HOW TO FIX THE BAD MESSAGE IN PROD:                                 ║
 ║    a) Fix schema (add column back)                                   ║
-║    b) Consume DLQ, fix data, re-produce to source topic            ║
+║    b) Consume DLQ, fix data, re-produce to source topic              ║
 ║    c) Or: skip the message and accept data loss                      ║
 ║                                                                      ║
 ║  WHY NOT JUST RESTART?                                               ║
-║    Restarting doesn't help — the bad message is still in Kafka.    ║
+║    Restarting doesn't help — the bad message is still in Kafka.      ║
 ║    Without DLQ: connector crashes in a loop.                         ║
 ║    With DLQ: message is skipped, pipeline continues.                 ║
 ╚══════════════════════════════════════════════════════════════════════╝
