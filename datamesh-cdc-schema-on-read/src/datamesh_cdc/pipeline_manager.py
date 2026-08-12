@@ -1,7 +1,5 @@
 """
-Pipeline Manager — Schema-on-Read.
-
-Manages CDC pipelines where Bronze stores JSON and schema is applied at Silver/Gold.
+Pipeline Manager — manages CDC pipelines across Data Mesh domains.
 """
 
 import json
@@ -11,7 +9,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from pathlib import Path
 
-from .schema_evolution import SchemaEvolutionManager, DataMeshPipeline, PipelineConfig
+from .schema_evolution import SchemaEvolutionManager, DataMeshPipeline, PipelineConfig, CompatibilityLevel
 
 logger = logging.getLogger(__name__)
 
@@ -26,15 +24,17 @@ class PipelineManager:
             self._load_state()
 
     def create_pipeline(self, pipeline_id: str, source_topic: str, sink_table: str,
-                        domain: str, owner_email: str = "",
-                        alert_webhook: Optional[str] = None,
-                        track_schema_history: bool = True) -> DataMeshPipeline:
+                        domain: str, opt_in_schema_evolution: bool = True,
+                        consumed_fields: Optional[List[str]] = None,
+                        owner_email: str = "", alert_webhook: Optional[str] = None) -> DataMeshPipeline:
         if pipeline_id in self.pipelines:
-            raise ValueError(f"Pipeline {pipeline_id} already exists")
+            logger.info(f"Pipeline {pipeline_id} already exists, skipping")
+            return self.pipelines[pipeline_id]
         config = PipelineConfig(
-            pipeline_id=pipeline_id, source_topic=source_topic,
-            sink_table=sink_table, domain=domain, owner_email=owner_email,
-            alert_webhook=alert_webhook, track_schema_history=track_schema_history
+            pipeline_id=pipeline_id, source_topic=source_topic, sink_table=sink_table,
+            domain=domain, opt_in_schema_evolution=opt_in_schema_evolution,
+            consumed_fields=consumed_fields or [], owner_email=owner_email,
+            alert_webhook=alert_webhook
         )
         pipeline = DataMeshPipeline(config, self.schema_manager)
         self.pipelines[pipeline_id] = pipeline
@@ -55,8 +55,17 @@ class PipelineManager:
                 "source_topic": pipe.config.source_topic,
                 "sink_table": pipe.config.sink_table,
                 "state": pipe.state,
+                "opt_in": pipe.config.opt_in_schema_evolution,
                 "owner": pipe.config.owner_email
             })
+        return result
+
+    def handle_schema_change(self, pipeline_id: str, new_schema: dict) -> dict:
+        pipeline = self.pipelines.get(pipeline_id)
+        if not pipeline:
+            return {"error": f"Pipeline {pipeline_id} not found"}
+        result = pipeline.handle_schema_change(new_schema)
+        self._save_state()
         return result
 
     def get_domain_stats(self, domain: str) -> Dict:
@@ -64,7 +73,9 @@ class PipelineManager:
         return {
             "domain": domain, "total_pipelines": len(domain_pipes),
             "running": sum(1 for p in domain_pipes if p.state == "RUNNING"),
-            "schema_changes_logged": sum(len(p._schema_version_history) for p in domain_pipes),
+            "paused": sum(1 for p in domain_pipes if p.state == "PAUSED"),
+            "opt_in_count": sum(1 for p in domain_pipes if p.config.opt_in_schema_evolution),
+            "opt_out_count": sum(1 for p in domain_pipes if not p.config.opt_in_schema_evolution),
         }
 
     def _save_state(self):
@@ -76,7 +87,7 @@ class PipelineManager:
                 "config": asdict(pipe.config), "state": pipe.state,
                 "history": pipe._schema_version_history
             }
-        self.state_file.write_text(json.dumps(state, indent=2))
+        self.state_file.write_text(json.dumps(state, indent=2, default=lambda o: o.value if hasattr(o, 'value') else str(o)))
 
     def _load_state(self):
         try:
@@ -105,11 +116,12 @@ class SelfServeAPI:
             pipeline = self.manager.create_pipeline(
                 pipeline_id=request["pipeline_id"], source_topic=request["source_topic"],
                 sink_table=request["sink_table"], domain=request["domain"],
+                opt_in_schema_evolution=request.get("opt_in_schema_evolution", True),
+                consumed_fields=request.get("consumed_fields"),
                 owner_email=request.get("owner_email", ""),
-                alert_webhook=request.get("alert_webhook"),
-                track_schema_history=request.get("track_schema_history", True)
+                alert_webhook=request.get("alert_webhook")
             )
-            return {"status": "created", "pipeline_id": pipeline.config.pipeline_id}
+            return {"status": "created", "pipeline_id": pipeline.config.pipeline_id, "opt_in": pipeline.config.opt_in_schema_evolution}
         except ValueError as e:
             return {"error": str(e)}
 

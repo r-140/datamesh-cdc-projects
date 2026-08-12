@@ -1,0 +1,280 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "CDC Data Mesh - Schema Evolution Monitoring",
+    "tags": [
+      "cdc",
+      "datamesh",
+      "schema-registry"
+    ],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Schema Registry - Registered Schema Count",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "kafka_schema_registry_registered_count",
+            "legendFormat": "{{subject}}",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        },
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 5
+                },
+                {
+                  "color": "red",
+                  "value": 10
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Compatibility Check Failures",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "kafka_schema_registry_compatibility_checks_failed",
+            "legendFormat": "Failed Checks",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        },
+        "alert": {
+          "name": "Schema Compatibility Failed",
+          "message": "Schema Registry rejected an incompatible schema!",
+          "evaluator": {
+            "params": [
+              0
+            ],
+            "type": "gt"
+          },
+          "operator": {
+            "type": "and"
+          },
+          "query": {
+            "model": {
+              "expr": "kafka_schema_registry_compatibility_checks_failed"
+            }
+          },
+          "reducer": {
+            "type": "last"
+          },
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  0
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "A",
+                  "5m",
+                  "now"
+                ]
+              },
+              "reducer": {
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      },
+      {
+        "id": 3,
+        "title": "Kafka Connect - Task Error Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "kafka_connect_source_task_record_error_rate",
+            "legendFormat": "{{connector}} - Task {{task}}",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        },
+        "alert": {
+          "name": "Connector Task Errors",
+          "message": "Kafka Connect task has errors!",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  0
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "A",
+                  "5m",
+                  "now"
+                ]
+              },
+              "reducer": {
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      },
+      {
+        "id": 4,
+        "title": "Pipeline Status (Schema Evolution Service)",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "pipeline_status{job=\"schema-evolution\"}",
+            "format": "table",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        },
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "indexByName": {},
+              "renameByName": {
+                "pipeline_id": "Pipeline",
+                "status": "Status",
+                "domain": "Domain"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Null Rate Detection (Data Quality)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "avg by (column) (null_rate{table=\"orders\"})",
+            "legendFormat": "{{column}} null %",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 16
+        },
+        "alert": {
+          "name": "Null Spike Detected",
+          "message": "Column suddenly has high null rate -- possible schema break!",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [
+                  50
+                ],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "A",
+                  "5m",
+                  "now"
+                ]
+              },
+              "reducer": {
+                "type": "avg"
+              },
+              "type": "query"
+            }
+          ]
+        }
+      },
+      {
+        "id": 6,
+        "title": "Kafka Message Throughput",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "kafka_connect_source_task_record_send_rate",
+            "legendFormat": "{{connector}}",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 24
+        }
+      },
+      {
+        "id": 7,
+        "title": "Schema Version History",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "schema_registry_version{subject=\"orders-server.public.orders-value\"}",
+            "format": "table",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 24
+        }
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "5s"
+  },
+  "overwrite": true
+}

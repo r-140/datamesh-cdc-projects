@@ -1,0 +1,109 @@
+version: 2
+
+sources:
+  - name: raw
+    database: datamesh_dwh
+    schema: raw
+    tables:
+      - name: orders_cdc
+      - name: customers_cdc
+
+models:
+  - name: orders_bronze
+    description: "Bronze layer — raw CDC orders as JSONB pass-through"
+    columns:
+      - name: id
+        data_tests:
+          - unique
+          - not_null
+      - name: payload
+        data_tests:
+          - not_null
+      - name: __op
+      - name: ingested_at
+
+  - name: customers_bronze
+    description: "Bronze layer — raw CDC customers as JSONB pass-through"
+    columns:
+      - name: id
+        data_tests:
+          - unique
+          - not_null
+      - name: payload
+        data_tests:
+          - not_null
+
+  - name: orders_silver
+    description: "Silver layer — typed orders extracted from JSONB"
+    columns:
+      - name: id
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        data_tests:
+          - not_null
+      - name: total_amount
+        data_tests:
+          - not_null
+      - name: status
+        data_tests:
+          - not_null
+          - accepted_values:
+              name: accepted_values_orders_silver_status
+              arguments:
+                values: ['pending', 'completed', 'shipped', 'cancelled', 'refunded']
+      - name: created_at
+        data_tests:
+          - not_null
+
+  - name: customers_silver
+    description: "Silver layer — typed customers extracted from JSONB"
+    columns:
+      - name: id
+        data_tests:
+          - unique
+          - not_null
+      - name: full_name
+        data_tests:
+          - not_null
+      - name: email
+        data_tests:
+          - not_null
+      - name: country
+        data_tests:
+          - not_null
+
+  - name: orders_daily_summary
+    description: "Gold layer — daily orders aggregated by status"
+    columns:
+      - name: order_date
+        data_tests:
+          - not_null
+      - name: status
+        data_tests:
+          - not_null
+      - name: order_count
+        data_tests:
+          - not_null
+      - name: total_revenue
+        data_tests:
+          - not_null
+
+  - name: customer_ltv
+    description: "Gold layer — customer lifetime value and segmentation"
+    columns:
+      - name: customer_id
+        data_tests:
+          - unique
+          - not_null
+      - name: lifetime_value
+        data_tests:
+          - not_null
+      - name: customer_segment
+        data_tests:
+          - not_null
+          - accepted_values:
+              name: accepted_values_customer_ltv_segment
+              arguments:
+                values: ['VIP', 'High', 'Medium', 'New']

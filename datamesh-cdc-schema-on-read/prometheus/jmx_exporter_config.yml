@@ -1,0 +1,120 @@
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+
+rules:
+  # ─── Debezium Events Total ──────────────────────────────────────────
+  - pattern: "debezium.postgres<type=connector-metrics, context=streaming, server=(.+)><>TotalNumberOfEventsSeen"
+    name: "debezium_events_total"
+    labels:
+      server: "$1"
+    help: "Total CDC events captured"
+    type: GAUGE
+
+  # ─── Debezium Lag ───────────────────────────────────────────────────
+  - pattern: "debezium.postgres<type=connector-metrics, context=streaming, server=(.+)><>MilliSecondsSinceLastEvent"
+    name: "debezium_lag_ms"
+    labels:
+      server: "$1"
+    help: "Milliseconds since last event (replication lag)"
+    type: GAUGE
+
+  # ─── Debezium Snapshot Running ──────────────────────────────────────
+  - pattern: "debezium.postgres<type=connector-metrics, context=snapshot, server=(.+)><>SnapshotRunning"
+    name: "debezium_snapshot_running"
+    labels:
+      server: "$1"
+    help: "Is initial snapshot in progress (0/1)"
+    type: GAUGE
+
+  # ─── Debezium Snapshot Completed ──────────────────────────────────
+  - pattern: "debezium.postgres<type=connector-metrics, context=snapshot, server=(.+)><>SnapshotCompleted"
+    name: "debezium_snapshot_completed"
+    labels:
+      server: "$1"
+    help: "Has initial snapshot completed"
+    type: GAUGE
+
+  # ─── Kafka Connect Sink Send Rate ───────────────────────────────────
+  - pattern: "kafka.connect<type=sink-task-metrics, connector=(.+), task=(.+)><>sink-record-send-rate"
+    name: "kafka_connect_sink_record_send_rate"
+    labels:
+      connector: "$1"
+      task: "$2"
+    help: "Records/sec sent to DWH"
+    type: GAUGE
+
+  # ─── Kafka Connect Sink Active Count ────────────────────────────────
+  - pattern: "kafka.connect<type=sink-task-metrics, connector=(.+), task=(.+)><>sink-record-active-count"
+    name: "kafka_connect_sink_record_active_count"
+    labels:
+      connector: "$1"
+      task: "$2"
+    help: "Active records in sink buffer"
+    type: GAUGE
+
+  # ─── Kafka Connect Sink Read Rate ─────────────────────────────────
+  - pattern: "kafka.connect<type=sink-task-metrics, connector=(.+), task=(.+)><>sink-record-read-rate"
+    name: "kafka_connect_sink_record_read_rate"
+    labels:
+      connector: "$1"
+      task: "$2"
+    help: "Records/sec read by sink"
+    type: GAUGE
+
+  # ─── Kafka Connect Worker Task Count ────────────────────────────────
+  - pattern: "kafka.connect<type=connect-worker-metrics><>task-count"
+    name: "kafka_connect_worker_task_count"
+    help: "Total number of tasks"
+    type: GAUGE
+
+  # ─── JVM Heap Memory Used ───────────────────────────────────────────
+  - pattern: "java.lang<type=Memory><HeapMemoryUsage>used"
+    name: "jvm_memory_used_bytes"
+    labels:
+      area: "heap"
+    help: "JVM heap memory used in bytes"
+    type: GAUGE
+
+  # ─── JVM Heap Memory Committed ────────────────────────────────────
+  - pattern: "java.lang<type=Memory><HeapMemoryUsage>committed"
+    name: "jvm_memory_committed_bytes"
+    labels:
+      area: "heap"
+    help: "JVM heap memory committed in bytes"
+    type: GAUGE
+
+  # ─── JVM NonHeap Memory Used ──────────────────────────────────────
+  - pattern: "java.lang<type=Memory><NonHeapMemoryUsage>used"
+    name: "jvm_memory_used_bytes"
+    labels:
+      area: "nonheap"
+    help: "JVM non-heap memory used in bytes"
+    type: GAUGE
+
+  # ─── JVM GC Collection Count ──────────────────────────────────────
+  - pattern: "java.lang<type=GarbageCollector, name=(.+)><>CollectionCount"
+    name: "jvm_gc_collection_count"
+    labels:
+      gc: "$1"
+    help: "JVM GC collection count"
+    type: COUNTER
+
+  # ─── JVM GC Collection Time ─────────────────────────────────────────
+  - pattern: "java.lang<type=GarbageCollector, name=(.+)><>CollectionTime"
+    name: "jvm_gc_collection_time_ms"
+    labels:
+      gc: "$1"
+    help: "JVM GC collection time in ms"
+    type: COUNTER
+
+  # ─── JVM Threads ──────────────────────────────────────────────────
+  - pattern: "java.lang<type=Threading><>ThreadCount"
+    name: "jvm_threads_current"
+    help: "Current JVM thread count"
+    type: GAUGE
+
+  # ─── Generic catch-all for remaining kafka metrics ────────────────
+  - pattern: "kafka.(.*)<type=(.*), name=(.*)><>(.*)"
+    name: "kafka_$1_$2_$3_$4"
+    help: "Kafka metric $1 $2 $3 $4"
+    type: GAUGE

@@ -1,0 +1,12 @@
+datamesh_trino:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: localhost
+      port: 5434
+      user: dwh
+      password: dwh
+      dbname: datamesh_dwh
+      schema: raw
+      threads: 4

@@ -1,66 +1,18 @@
-[build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "datamesh-cdc-schema-on-read"
+name = "datamesh-cdc"
 version = "0.1.0"
-description = "Data Mesh CDC Platform — Schema-on-Read (Flexible)"
-readme = "README.md"
-license = {text = "MIT"}
-requires-python = ">=3.10"
-authors = [{name = "Your Name", email = "your.email@example.com"}]
-keywords = ["cdc", "data-mesh", "schema-evolution", "schema-on-read", "iceberg", "kafka", "debezium"]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Developers",
-    "Topic :: Database",
-    "Programming Language :: Python :: 3.11",
-]
-dependencies = [
-    "confluent-kafka[avro,schema-registry]>=2.3.0",
-    "pyiceberg[sql-lite,s3fs]>=0.6.0",
-    "requests>=2.31.0",
-]
+description = "Data Mesh CDC Schema-on-Write Demo"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
-    "pytest-timeout>=2.2.0",
-    "black>=23.0.0",
-    "ruff>=0.1.0",
-    "mypy>=1.8.0",
+    "dbt-core>=1.8.0",
+    "dbt-postgres>=1.8.0",
+    "confluent-kafka>=2.3.0",
+    "requests>=2.31.0",
+    "psycopg2-binary>=2.9.9",
+    "confluent-kafka[avro]>=2.3.0",
 ]
 
-[project.urls]
-Homepage = "https://github.com/yourusername/datamesh-cdc-schema-on-read"
-Repository = "https://github.com/yourusername/datamesh-cdc-schema-on-read"
-
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.black]
-line-length = 100
-target-version = ['py311']
-
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-select = ["E", "F", "W", "I", "N", "D", "UP", "B", "C4", "SIM"]
-ignore = ["D100", "D104", "D107"]
-
-[tool.mypy]
-python_version = "3.11"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["src"]
-addopts = "-v --tb=short"
-markers = [
-    "integration: marks tests as integration tests",
-    "slow: marks tests as slow",
-]
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"

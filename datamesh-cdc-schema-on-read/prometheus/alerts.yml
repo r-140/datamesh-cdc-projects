@@ -1,0 +1,73 @@
+groups:
+  - name: cdc_pipeline
+    interval: 15s
+    rules:
+      # ─── Kafka Connect JMX Down ───────────────────────────────────────
+      - alert: KafkaConnectDown
+        expr: up{job="kafka-connect-jmx"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka Connect JMX exporter is down"
+          description: "Kafka Connect JMX endpoint at {{ $labels.instance }} has been down for more than 30 seconds."
+
+      # ─── CDC High Lag ────────────────────────────────────────────────
+      - alert: CDC_HighLag
+        expr: debezium_lag_ms > 60000
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CDC lag is high for {{ $labels.server }}"
+          description: "Replication lag for {{ $labels.server }} is {{ $value }}ms (> 60s)."
+
+      # ─── CDC Pipeline Stall (no events) ─────────────────────────────
+      - alert: CDC_PipelineStall
+        expr: rate(debezium_events_total[5m]) == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CDC pipeline stalled for {{ $labels.server }}"
+          description: "No CDC events for {{ $labels.server }} in the last 5 minutes."
+
+      # ─── CDC Sink Stall ─────────────────────────────────────────────
+      - alert: CDC_SinkStall
+        expr: rate(kafka_connect_sink_record_send_rate[2m]) == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "JDBC Sink {{ $labels.connector }} stalled"
+          description: "Sink {{ $labels.connector }} has not sent records in 2 minutes."
+
+      # ─── Postgres DWH Down ─────────────────────────────────────────
+      - alert: PostgresDWHDown
+        expr: up{job="postgres-exporter"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Postgres DWH exporter is down"
+          description: "postgres-exporter at {{ $labels.instance }} is unreachable."
+
+      # ─── Postgres High Connections ─────────────────────────────────
+      - alert: PostgresHighConnections
+        expr: pg_stat_activity_count > 80
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Postgres DWH high connection count"
+          description: "{{ $value }} active connections (> 80)."
+
+      # ─── Postgres Dead Tuples ─────────────────────────────────────
+      - alert: PostgresDeadTuplesHigh
+        expr: pg_stat_user_tables_n_dead_tup > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Postgres dead tuples high"
+          description: "Table {{ $labels.relname }} has {{ $value }} dead tuples."
