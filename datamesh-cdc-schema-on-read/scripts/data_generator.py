@@ -99,8 +99,8 @@ def generate_customers(count):
         email = f"{name.lower().replace(' ', '.')}{random.randint(1,999)}@{random.choice(domains)}"
         country = random.choice(countries)
         pg_execute(CUSTOMERS_DB,
-            "INSERT INTO customers (name, full_name, email, country) VALUES (%s, %s, %s, %s)",
-            (name, name, email, country))
+            "INSERT INTO customers (full_name, email, country) VALUES (%s, %s, %s)",
+            (name, email, country))
 
 def verify():
     print("\n" + "=" * 70)
