@@ -1,0 +1,29 @@
+name: CD — Deploy Schema-on-Read
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to staging
+        run: |
+          echo "Deploying to staging environment..."
+          # Add your deployment steps here (e.g., SSH, kubectl, Terraform)
+      - name: Smoke test
+        run: |
+          curl -sf http://staging:8083/connectors || exit 1
+      - name: Deploy to production
+        if: success()
+        run: |
+          echo "Deploying to production environment..."
+          # Add your production deployment steps here
+      - name: Verify production
+        run: |
+          curl -sf http://prod:8083/connectors || exit 1
+          curl -sf http://prod:3000/api/health || exit 1

@@ -1,0 +1,67 @@
+groups:
+  - name: cdc_alerts
+    interval: 15s
+    rules:
+      - alert: CDC_Connector_Down
+        expr: kafka_connect_connector_task_state != 1
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "CDC Connector {{ $labels.connector }} is down"
+          description: "Connector {{ $labels.connector }} task state is not RUNNING for more than 30 seconds."
+
+      - alert: CDC_High_Lag
+        expr: debezium_lag_ms / 1000 > 60
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CDC high replication lag on {{ $labels.connector }}"
+          description: "Replication lag for {{ $labels.connector }} is {{ $value }} seconds."
+
+      - alert: CDC_Pipeline_Stall
+        expr: rate(debezium_events_total[5m]) == 0 and debezium_snapshot_running == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CDC pipeline stall detected"
+          description: "No CDC events in the last 5 minutes and no snapshot is running."
+
+      - alert: CDC_Consumer_Down
+        expr: absent(cdc_consumer_messages_total) or rate(cdc_consumer_messages_total[5m]) == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "CDC Consumer is down or stalled"
+          description: "Python CDC Consumer has not processed messages in the last 2 minutes."
+
+      - alert: DWH_High_Rollback_Rate
+        expr: |
+          (
+            rate(pg_stat_database_xact_rollback{datname="datamesh_dwh"}[5m])
+            /
+            (rate(pg_stat_database_xact_commit{datname="datamesh_dwh"}[5m]) + rate(pg_stat_database_xact_rollback{datname="datamesh_dwh"}[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DWH high rollback rate"
+          description: "Rollback rate is {{ $value | humanizePercentage }}."
+
+      - alert: DWH_Low_Cache_Hit_Ratio
+        expr: |
+          (
+            pg_stat_database_blks_hit{datname="datamesh_dwh"}
+            /
+            (pg_stat_database_blks_hit{datname="datamesh_dwh"} + pg_stat_database_blks_read{datname="datamesh_dwh"})
+          ) < 0.90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DWH cache hit ratio is low"
+          description: "Cache hit ratio is {{ $value | humanizePercentage }}."
