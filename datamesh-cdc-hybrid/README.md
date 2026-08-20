@@ -23,8 +23,17 @@ PostgreSQL is intentionally used for the warehouse. The demo concerns schema-evo
 python -m pip install -e '.[dev]'
 make test
 make up
-docker compose logs -f hybrid-consumer
+make demo
 ```
+
+`make demo` automatically demonstrates four stages:
+
+1. A compatible event is written to both Bronze and Silver.
+2. An additive `promo_code` field is preserved immediately in Bronze while the stable Silver contract continues working.
+3. Dropping required `total_amount` does not stop Bronze; the typed Silver projection is quarantined in `governance.projection_failures`.
+4. Restoring the field and issuing a corrective source update promotes the record to Silver without rebuilding the pipeline.
+
+The script restores the dropped source column even when the demo fails midway. Demo records remain in the source and warehouse so that the results can be inspected afterward.
 
 Useful queries:
 
