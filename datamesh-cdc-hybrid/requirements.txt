@@ -1,6 +1,5 @@
 confluent-kafka[avro,schema-registry]==2.3.0
-pyiceberg[sql-lite,s3fs]==0.6.0
-requests==2.31.0
+psycopg2-binary==2.9.9
 pytest==7.4.4
 pytest-cov==4.1.0
 pytest-timeout==2.2.0

@@ -1,78 +1,55 @@
-# Data Mesh CDC Platform — Hybrid (Best of Both)
+# Data Mesh CDC — Hybrid Schema Evolution
 
-> **Approach**: Bronze stores JSON (never breaks) + Schema Registry validates Silver DDL in CI before deployment.
+This project combines the useful guarantees of the sibling demos:
 
-## Architecture
+- **Schema-on-read at Bronze:** every decodable CDC event is stored unchanged as JSONB. Additive or breaking source changes do not stop ingestion.
+- **Schema-on-write at Silver:** explicit Python contracts coerce and validate fields before writing typed, consumer-friendly tables.
+- **A controlled failure boundary:** an invalid Silver projection is recorded in `governance.projection_failures`; the original event remains queryable and replayable in Bronze.
+- **Schema discovery:** each observed field set is fingerprinted in `governance.observed_schemas` so unannounced evolution is visible even when it is harmless.
+- **Idempotency and lineage:** Kafka topic/partition/offset is the Bronze key and is carried into Silver.
 
+```text
+PostgreSQL -> Debezium -> Kafka/Avro -> hybrid consumer
+                                      |-> bronze.cdc_events (JSONB, lossless)
+                                      |-> silver.* (typed contracts)
+                                      `-> governance.* (schema audit/failures)
 ```
-PostgreSQL → Debezium CDC → Kafka (JSON) → Bronze (JSON payload)
-→ Schema Registry (audit + detect changes)
-→ CI validates Silver DDL against source schema
-→ Silver (explicit CAST views) → Gold (business aggregations)
-```
 
-## Key Features
+PostgreSQL is intentionally used for the warehouse. The demo concerns schema-evolution boundaries, not OLTP versus OLAP storage engines.
 
-- **Never-breaking Bronze** — JSON payload, pipeline never stops
-- **Schema audit** — Schema Registry tracks all changes for lineage
-- **CI validation** — Silver SQL files validated against source schema before merge
-- **Controlled evolution** — business teams decide when to add fields to Silver
-- **Self-serve validation** — domain teams can validate their Silver DDL via API
-
-## Quick Start
+## Run
 
 ```bash
-pip install -e ".[dev]"
+python -m pip install -e '.[dev]'
+make test
 make up
-make simulate
+docker compose logs -f hybrid-consumer
 ```
 
-## Validate Silver DDL
-
-```bash
-# Validate all SQL files in sql/silver/ against source schemas
-python -m src.datamesh_cdc.schema_evolution_service --validate-silver sql/silver/
-
-# Or specific directory
-python -m src.datamesh_cdc.schema_evolution_service --validate-silver sql/silver/orders.sql
-```
-
-## Schema Evolution Behavior
+Useful queries:
 
 ```sql
--- Source adds new field
-ALTER TABLE orders ADD COLUMN promo_code VARCHAR(50);
+SELECT * FROM bronze.cdc_events ORDER BY ingested_at DESC;
+SELECT * FROM silver.orders ORDER BY id;
+SELECT * FROM governance.observed_schemas ORDER BY last_seen_at DESC;
+SELECT * FROM governance.projection_failures ORDER BY failed_at DESC;
 ```
 
-| Layer | Behavior |
-|-------|----------|
-| Bronze | ✅ Appends as JSON — no schema change needed |
-| Schema Registry | 📝 Detects and logs change, notifies owner |
-| CI (Silver validation) | ⚠️ Fails if `promo_code` added to Silver SQL but not in source |
-| Silver | `promo_code` exposed only after explicit DDL update + CI pass |
-| Gold | Unaffected until business decides |
+Connect with `psql postgresql://dwh:dwh@localhost:5434/datamesh_dwh`.
 
-## Documentation
+## Evolution examples
 
-- [Architecture](docs/architecture.md)
-- [schema_evolution.py](docs/schema_evolution.md)
-- [pipeline_manager.py](docs/pipeline_manager.md)
-- [iceberg_sink.py](docs/iceberg_sink.md)
-- [schema_evolution_service.py](docs/schema_evolution_service.md)
-- [CI/CD](docs/ci-cd.md)
+An additive `orders.promo_code` column appears immediately in Bronze and creates a new observed-schema fingerprint. Silver stays stable until the `orders` contract, DWH migration, and upsert are deliberately changed.
 
-## When to Use
+If `customer_id` disappears or becomes non-numeric, Bronze still accepts the event. Its Silver projection is quarantined with a concrete reason. Once the contract or producer is fixed, the immutable Bronze event can be replayed.
 
-✅ Data Mesh with multiple domain teams  
-✅ When you need flexibility + governance  
-✅ Data warehouses with CI/CD for SQL views  
-✅ When Silver layer is maintained by different team than source  
+This is the main advantage over either extreme: source evolution cannot silently corrupt typed consumer tables, but it also cannot destroy or block raw data acquisition.
 
-## Related Projects
+## Where to change the contract
 
-- [Schema-on-Write](../datamesh-cdc-schema-on-write) — Strict Avro compatibility
-- [Schema-on-Read](../datamesh-cdc-schema-on-read) — Fully flexible JSON
+- `src/datamesh_cdc/hybrid_projection.py`: required fields and conversions.
+- `scripts/init-dwh.sql`: typed Silver table DDL and governance tables.
+- `src/datamesh_cdc/consumer.py`: transactional Bronze write, Silver upsert, deletes, and quarantine.
+- `debezium/connectors/`: source capture configuration.
 
-## License
-
-MIT
+Production systems would additionally use migrations instead of init SQL, an outbox/alert for schema fingerprints, retention/compaction, metrics, and a replay command for quarantined Bronze offsets.

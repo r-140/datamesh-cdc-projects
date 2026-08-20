@@ -9,8 +9,8 @@ description = "Data Mesh CDC Platform — Hybrid (Flexible + Controlled)"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
-authors = [{name = "Your Name", email = "your.email@example.com"}]
-keywords = ["cdc", "data-mesh", "schema-evolution", "hybrid", "iceberg", "kafka", "debezium"]
+authors = [{name = "r-140"}]
+keywords = ["cdc", "data-mesh", "schema-evolution", "hybrid", "kafka", "debezium"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -19,8 +19,7 @@ classifiers = [
 ]
 dependencies = [
     "confluent-kafka[avro,schema-registry]>=2.3.0",
-    "pyiceberg[sql-lite,s3fs]>=0.6.0",
-    "requests>=2.31.0",
+    "psycopg2-binary>=2.9.9",
 ]
 
 [project.optional-dependencies]
@@ -34,8 +33,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/datamesh-cdc-hybrid"
-Repository = "https://github.com/yourusername/datamesh-cdc-hybrid"
+Homepage = "https://github.com/r-140/datamesh-cdc-projects"
+Repository = "https://github.com/r-140/datamesh-cdc-projects"
 
 [tool.setuptools.packages.find]
 where = ["src"]

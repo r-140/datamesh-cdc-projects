@@ -21,17 +21,18 @@ format: ## Format code
 	black src/ tests/
 	ruff check --fix src/ tests/
 
-up: ## Start infrastructure
-	docker compose up -d
+up: ## Build and start the complete hybrid pipeline
+	docker compose up -d --build
 
 down: ## Stop all services
-	docker compose down -v
+	docker compose down
 
-simulate: ## Run hybrid simulation
-	python -m src.datamesh_cdc.schema_evolution_service --simulate
+reset: ## Stop and delete demo volumes
+	docker compose down -v --remove-orphans
 
-validate-silver: ## Validate Silver DDL against source schemas
-	python -m src.datamesh_cdc.schema_evolution_service --validate-silver sql/silver/
+status: ## Show service and connector status
+	docker compose ps
+	@curl -fsS http://localhost:8083/connectors || true
 
 clean: ## Clean up
 	docker compose down -v
