@@ -34,6 +34,7 @@ PostgreSQL sources
 | Schema Registry | Stores wire-level Avro schemas used to decode Kafka records. |
 | `hybrid-consumer` | Writes lossless Bronze records, audits shapes and applies Silver contracts. |
 | `postgres-dwh` | Contains Bronze, Silver and governance schemas. |
+| dbt | Consumes stable Silver tables for Gold models and governance metadata for schema-evolution visibility. |
 
 ## Transaction Boundary
 
@@ -66,3 +67,7 @@ If the process stops before step 5, PostgreSQL rolls back and Kafka redelivers t
 ## Delivery Guarantees
 
 The demo provides at-least-once Kafka delivery with idempotent warehouse processing. It is not a distributed exactly-once transaction, but the ordering of the PostgreSQL and Kafka commits prevents acknowledged-but-unwritten events.
+
+## Downstream dbt Boundary
+
+dbt does not re-parse Bronze JSON into the main business models. It reads typed Silver tables, so a breaking source event cannot break Gold SQL. Separate governance models read the failure and observed-schema tables, preventing this stability from becoming silent data loss.

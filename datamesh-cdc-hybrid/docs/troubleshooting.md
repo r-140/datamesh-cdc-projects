@@ -39,6 +39,21 @@ Fixing the contract without fixing the payload does not make an invalid historic
 - introduce a documented default;
 - make the field optional if business semantics permit it.
 
+## dbt Cannot Find Silver Sources
+
+Run `make up` before dbt. The `silver`, `bronze` and `governance` schemas are initialized by `postgres-dwh` and populated by `hybrid-consumer`.
+
+Check the connection and source schemas:
+
+```bash
+make dbt-debug
+psql postgresql://dwh:dwh@localhost:5434/datamesh_dwh -c '\dn'
+```
+
+## dbt Warns About Unresolved Projection Failures
+
+This is the intended hybrid behavior. Business models were built from valid Silver data, but at least one Bronze event is still excluded. Inspect `dbt_governance_mart.projection_failures`, correct the source or apply an explicit repair policy, then rerun `make dbt-build`.
+
 ## Duplicate Kafka Delivery
 
 Duplicate delivery is expected after some failures. `bronze.cdc_events` uses `(topic, kafka_partition, kafka_offset)` as its primary key, so redelivery should produce the `duplicate` outcome without duplicating warehouse data.

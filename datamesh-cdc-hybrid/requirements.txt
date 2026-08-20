@@ -6,3 +6,4 @@ pytest-timeout==2.2.0
 black==23.12.1
 ruff==0.1.9
 mypy==1.8.0
+dbt-postgres>=1.8.0,<2.0.0

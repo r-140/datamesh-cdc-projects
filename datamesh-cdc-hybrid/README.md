@@ -24,6 +24,7 @@ python -m pip install -e '.[dev]'
 make test
 make up
 make demo
+make dbt-build
 ```
 
 `make demo` automatically demonstrates four stages:
@@ -68,6 +69,7 @@ This is the main advantage over either extreme: source evolution cannot silently
 - [Hybrid consumer](docs/consumer.md)
 - [Automated demo guide](docs/demo-guide.md)
 - [Data verification queries](docs/data-verification.md)
+- [dbt as a hybrid CDC consumer](docs/dbt.md)
 - [CI/CD](docs/ci-cd.md)
 - [Troubleshooting](docs/troubleshooting.md)
 

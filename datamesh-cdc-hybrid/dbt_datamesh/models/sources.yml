@@ -1,0 +1,20 @@
+version: 2
+
+sources:
+  - name: silver
+    database: datamesh_dwh
+    schema: silver
+    tables:
+      - name: orders
+      - name: customers
+  - name: bronze
+    database: datamesh_dwh
+    schema: bronze
+    tables:
+      - name: cdc_events
+  - name: governance
+    database: datamesh_dwh
+    schema: governance
+    tables:
+      - name: observed_schemas
+      - name: projection_failures

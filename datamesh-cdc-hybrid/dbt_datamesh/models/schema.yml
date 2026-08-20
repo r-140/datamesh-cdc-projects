@@ -1,0 +1,64 @@
+version: 2
+
+models:
+  - name: stg_orders
+    description: Stable typed orders supplied by the hybrid Silver contract.
+    columns:
+      - name: order_id
+        data_tests: [not_null, unique]
+      - name: customer_id
+        data_tests: [not_null]
+      - name: total_amount
+        data_tests: [not_null]
+      - name: status
+        data_tests: [not_null]
+      - name: bronze_offset
+        data_tests: [not_null]
+
+  - name: stg_customers
+    description: Stable typed customers supplied by the hybrid Silver contract.
+    columns:
+      - name: customer_id
+        data_tests: [not_null, unique]
+      - name: email
+        data_tests: [not_null]
+      - name: country
+        data_tests: [not_null]
+
+  - name: order_status_summary
+    description: Current order counts and revenue by governed status.
+    columns:
+      - name: status
+        data_tests: [not_null, unique]
+      - name: order_count
+        data_tests: [not_null]
+      - name: total_revenue
+        data_tests: [not_null]
+
+  - name: customer_country_summary
+    description: Current customer counts by governed country.
+    columns:
+      - name: country
+        data_tests: [not_null, unique]
+      - name: customer_count
+        data_tests: [not_null]
+
+  - name: schema_observations
+    description: Field-set fingerprints observed in flexible Bronze events.
+    columns:
+      - name: fingerprint
+        data_tests: [not_null]
+      - name: event_count
+        data_tests: [not_null]
+
+  - name: projection_failures
+    description: Silver projection failures enriched with recovery status.
+    columns:
+      - name: topic
+        data_tests: [not_null]
+      - name: kafka_offset
+        data_tests: [not_null]
+      - name: error
+        data_tests: [not_null]
+      - name: resolved_by_later_event
+        data_tests: [not_null]

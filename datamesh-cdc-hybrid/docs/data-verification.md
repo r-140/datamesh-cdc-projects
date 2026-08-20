@@ -76,3 +76,14 @@ JOIN bronze.cdc_events b
  AND b.kafka_partition = s.bronze_partition
  AND b.kafka_offset = s.bronze_offset;
 ```
+
+## dbt Outputs
+
+After `make dbt-build`:
+
+```sql
+SELECT * FROM dbt_gold.order_status_summary ORDER BY status;
+SELECT * FROM dbt_gold.customer_country_summary ORDER BY country;
+SELECT * FROM dbt_governance_mart.schema_observations ORDER BY last_seen_at DESC;
+SELECT * FROM dbt_governance_mart.projection_failures ORDER BY failed_at DESC;
+```

@@ -1,0 +1,14 @@
+hybrid_postgres:
+  config:
+    send_anonymous_usage_stats: false
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('DBT_HOST', 'localhost') }}"
+      port: "{{ env_var('DBT_PORT', '5434') | int }}"
+      user: "{{ env_var('DBT_USER', 'dwh') }}"
+      password: "{{ env_var('DBT_PASSWORD', 'dwh') }}"
+      dbname: "{{ env_var('DBT_DATABASE', 'datamesh_dwh') }}"
+      schema: dbt
+      threads: 4

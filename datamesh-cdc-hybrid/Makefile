@@ -1,4 +1,4 @@
-.PHONY: help install test test-unit lint format up down reset status demo clean
+.PHONY: help install test test-unit lint format up down reset status demo dbt-debug dbt-run dbt-test dbt-build dbt-docs clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -36,6 +36,21 @@ status: ## Show service and connector status
 
 demo: ## Run additive, breaking-change, quarantine and recovery scenarios
 	python scripts/run_demo.py
+
+dbt-debug: ## Check the dbt connection and project configuration
+	cd dbt_datamesh && dbt debug --profiles-dir .
+
+dbt-run: ## Build dbt staging, Gold and governance models
+	cd dbt_datamesh && dbt run --profiles-dir .
+
+dbt-test: ## Test dbt models and warn about unresolved projections
+	cd dbt_datamesh && dbt test --profiles-dir .
+
+dbt-build: ## Run and test the complete dbt DAG
+	cd dbt_datamesh && dbt build --profiles-dir .
+
+dbt-docs: ## Generate and serve dbt lineage documentation
+	cd dbt_datamesh && dbt docs generate --profiles-dir . && dbt docs serve --profiles-dir .
 
 clean: ## Clean up
 	docker compose down -v

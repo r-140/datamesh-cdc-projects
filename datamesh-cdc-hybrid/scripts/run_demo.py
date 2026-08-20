@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import sys
 import time
+import shutil
+import subprocess
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import psycopg2
@@ -13,6 +16,7 @@ import psycopg2
 SOURCE_DSN = "postgresql://postgres:postgres@localhost:5432/orders_db"
 DWH_DSN = "postgresql://dwh:dwh@localhost:5434/datamesh_dwh"
 POLL_SECONDS = 30
+DBT_DIR = Path(__file__).resolve().parents[1] / "dbt_datamesh"
 
 
 def banner(text: str) -> None:
@@ -74,6 +78,14 @@ def restore_source_schema() -> None:
     )
 
 
+def run_dbt(*arguments: str) -> None:
+    if not shutil.which("dbt"):
+        raise RuntimeError("dbt is not installed; run `python -m pip install -e '.[dev]'`")
+    command = ["dbt", *arguments, "--profiles-dir", "."]
+    print(f"\n$ cd dbt_datamesh && {' '.join(command)}")
+    subprocess.run(command, cwd=DBT_DIR, check=True)
+
+
 def main() -> None:
     banner("HYBRID CDC DEMO: FLEXIBLE BRONZE + GOVERNED SILVER")
     print("Prerequisite: run `make up` and wait until all services are healthy.")
@@ -95,6 +107,8 @@ def main() -> None:
     )
     wait_for("baseline event stored unchanged in Bronze", lambda: bronze_payload(baseline_id))
     wait_for("baseline event promoted to typed Silver", lambda: silver_exists(baseline_id))
+    run_dbt("build")
+    print("✓ dbt consumed governed Silver and built the Gold models")
 
     banner("STEP 2: ADDITIVE CHANGE IS IMMEDIATELY SAFE IN BRONZE")
     fingerprints_before = scalar(
@@ -141,6 +155,9 @@ def main() -> None:
     print(f"  Bronze fields: {sorted(broken_payload)}")
     print(f"  Projection error: {error}")
     print(f"  Row present in Silver: {silver_exists(broken_id)}")
+    run_dbt("run", "--select", "projection_failures")
+    run_dbt("test", "--select", "no_unresolved_projection_failures")
+    print("✓ dbt warned about the unresolved projection; Gold remained stable")
 
     banner("STEP 4: RECOVERY WITH A CORRECTIVE SOURCE EVENT")
     restore_source_schema()
@@ -158,6 +175,9 @@ def main() -> None:
     print(
         f"  Recovered Silver row: id={recovered[0]}, amount={recovered[1]}, status={recovered[2]}"
     )
+    run_dbt("run", "--select", "projection_failures")
+    run_dbt("test", "--select", "no_unresolved_projection_failures")
+    print("✓ dbt now sees the historical failure as resolved by the later offset")
 
     banner("RESULT")
     print(

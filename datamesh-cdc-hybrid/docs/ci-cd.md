@@ -8,6 +8,7 @@ The workflow in `.github/workflows/ci-cd.yml` runs from the repository root but 
 2. unit tests with coverage;
 3. Python bytecode compilation;
 4. Docker Compose configuration validation.
+5. dbt project parsing without requiring a live warehouse.
 
 Run the equivalent checks locally:
 
@@ -16,6 +17,7 @@ python -m pip install -e '.[dev]'
 pytest tests --cov=datamesh_cdc
 python -m compileall -q src scripts/run_demo.py
 docker compose config -q
+cd dbt_datamesh && dbt parse --profiles-dir .
 ```
 
 ## Silver Change Workflow
