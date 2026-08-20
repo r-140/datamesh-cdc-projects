@@ -61,4 +61,14 @@ This is the main advantage over either extreme: source evolution cannot silently
 - `src/datamesh_cdc/consumer.py`: transactional Bronze write, Silver upsert, deletes, and quarantine.
 - `debezium/connectors/`: source capture configuration.
 
+## Documentation
+
+- [Architecture](docs/architecture.md)
+- [Schema evolution](docs/schema-evolution.md)
+- [Hybrid consumer](docs/consumer.md)
+- [Automated demo guide](docs/demo-guide.md)
+- [Data verification queries](docs/data-verification.md)
+- [CI/CD](docs/ci-cd.md)
+- [Troubleshooting](docs/troubleshooting.md)
+
 Production systems would additionally use migrations instead of init SQL, an outbox/alert for schema fingerprints, retention/compaction, metrics, and a replay command for quarantined Bronze offsets.
