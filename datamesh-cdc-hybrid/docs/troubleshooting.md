@@ -10,6 +10,14 @@ curl -fsS http://localhost:8081/subjects
 docker compose logs --tail=200 kafka-connect hybrid-consumer
 ```
 
+For monitoring diagnostics:
+
+```bash
+curl -fsS http://localhost:8000/metrics
+curl -fsS http://localhost:9090/-/ready
+curl -fsS http://localhost:9090/api/v1/targets
+```
+
 ## `make demo` Cannot Connect
 
 Run `make up`, then wait for PostgreSQL, Kafka Connect and the hybrid consumer to become healthy/running. Confirm ports 5432 and 5434 are reachable from the host.

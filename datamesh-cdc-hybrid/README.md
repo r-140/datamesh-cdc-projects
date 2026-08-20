@@ -27,6 +27,8 @@ make demo
 make dbt-build
 ```
 
+Monitoring is provisioned automatically: Grafana at `http://localhost:3000` and Prometheus at `http://localhost:9090`.
+
 `make demo` automatically demonstrates four stages:
 
 1. A compatible event is written to both Bronze and Silver.
@@ -70,6 +72,7 @@ This is the main advantage over either extreme: source evolution cannot silently
 - [Automated demo guide](docs/demo-guide.md)
 - [Data verification queries](docs/data-verification.md)
 - [dbt as a hybrid CDC consumer](docs/dbt.md)
+- [Prometheus and Grafana monitoring](docs/monitoring.md)
 - [CI/CD](docs/ci-cd.md)
 - [Troubleshooting](docs/troubleshooting.md)
 

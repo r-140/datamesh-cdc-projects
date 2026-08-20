@@ -1,4 +1,4 @@
-.PHONY: help install test test-unit lint format up down reset status demo dbt-debug dbt-run dbt-test dbt-build dbt-docs clean
+.PHONY: help install test test-unit lint format up down reset status monitoring-status demo dbt-debug dbt-run dbt-test dbt-build dbt-docs clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -33,6 +33,12 @@ reset: ## Stop and delete demo volumes
 status: ## Show service and connector status
 	docker compose ps
 	@curl -fsS http://localhost:8083/connectors || true
+
+monitoring-status: ## Check Prometheus, Grafana and metrics endpoints
+	@curl -fsS http://localhost:9090/-/ready
+	@curl -fsS http://localhost:3000/api/health
+	@curl -fsS http://localhost:8000/metrics >/dev/null
+	@echo "Monitoring endpoints are ready"
 
 demo: ## Run additive, breaking-change, quarantine and recovery scenarios
 	python scripts/run_demo.py

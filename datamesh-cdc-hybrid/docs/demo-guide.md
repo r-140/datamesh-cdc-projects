@@ -20,6 +20,8 @@ make status
 make demo
 ```
 
+Optionally open the provisioned Grafana dashboard at `http://localhost:3000` before starting the demo to watch each state transition.
+
 ## Scenario 1: Baseline
 
 The script inserts a valid order. It waits until the same event can be found in `bronze.cdc_events` and `silver.orders`.

@@ -42,7 +42,7 @@ services:
     healthcheck: {test: ["CMD-SHELL", "curl -sf http://localhost:8081/subjects"], interval: 10s, timeout: 5s, retries: 12}
   kafka-connect:
     build: ./kafka-connect
-    ports: ["8083:8083"]
+    ports: ["8083:8083", "7071:7071"]
     environment:
       CONNECT_BOOTSTRAP_SERVERS: kafka:29092
       CONNECT_GROUP_ID: hybrid-connect
@@ -58,6 +58,9 @@ services:
       CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
       CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
       CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
+      KAFKA_OPTS: -javaagent:/usr/share/jmx_exporter/jmx_prometheus_javaagent.jar=7071:/usr/share/jmx_exporter/config.yml
+    volumes:
+      - ./prometheus/jmx_exporter_config.yml:/usr/share/jmx_exporter/config.yml:ro
     depends_on:
       schema-registry: {condition: service_healthy}
       postgres-orders: {condition: service_healthy}
@@ -71,8 +74,37 @@ services:
   hybrid-consumer:
     build: .
     command: python -m datamesh_cdc.consumer
-    environment: {PYTHONPATH: /app/src, KAFKA_BOOTSTRAP_SERVERS: "kafka:29092", SCHEMA_REGISTRY_URL: "http://schema-registry:8081", DWH_DSN: "postgresql://dwh:dwh@postgres-dwh/datamesh_dwh"}
+    ports: ["8000:8000"]
+    environment: {PYTHONPATH: /app/src, KAFKA_BOOTSTRAP_SERVERS: "kafka:29092", SCHEMA_REGISTRY_URL: "http://schema-registry:8081", DWH_DSN: "postgresql://dwh:dwh@postgres-dwh/datamesh_dwh", METRICS_PORT: "8000"}
     depends_on:
       setup-connectors: {condition: service_completed_successfully}
       postgres-dwh: {condition: service_healthy}
-volumes: {orders_data: {}, customers_data: {}, dwh_data: {}}
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    ports: ["9187:9187"]
+    environment:
+      DATA_SOURCE_NAME: postgresql://dwh:dwh@postgres-dwh:5432/datamesh_dwh?sslmode=disable
+    depends_on:
+      postgres-dwh: {condition: service_healthy}
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    ports: ["9090:9090"]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    depends_on:
+      - hybrid-consumer
+      - postgres-exporter
+  grafana:
+    image: grafana/grafana:10.2.3
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+volumes: {orders_data: {}, customers_data: {}, dwh_data: {}, grafana_data: {}}

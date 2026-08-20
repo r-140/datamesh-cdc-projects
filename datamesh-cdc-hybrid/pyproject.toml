@@ -20,6 +20,7 @@ classifiers = [
 dependencies = [
     "confluent-kafka[avro,schema-registry]>=2.3.0",
     "psycopg2-binary>=2.9.9",
+    "prometheus-client>=0.20.0",
 ]
 
 [project.optional-dependencies]

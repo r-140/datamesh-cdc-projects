@@ -1,0 +1,38 @@
+groups:
+  - name: hybrid-cdc
+    rules:
+      - alert: HybridConsumerDown
+        expr: up{job="hybrid-consumer"} == 0
+        for: 30s
+        labels: {severity: critical}
+        annotations:
+          summary: Hybrid CDC consumer is down
+          description: Bronze ingestion and Silver projection have stopped.
+      - alert: HybridUnresolvedProjectionFailures
+        expr: hybrid_cdc_unresolved_projection_failures > 0
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: Hybrid CDC has unresolved Silver projection failures
+          description: "{{ $value }} Bronze events have no later successful Silver projection."
+      - alert: HybridProjectionFailureRateHigh
+        expr: sum(rate(hybrid_cdc_projection_failures_total[5m])) > 0.1
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: Hybrid Silver projection failure rate is elevated
+          description: More than 0.1 records per second are being retained only in Bronze.
+      - alert: KafkaConnectMetricsDown
+        expr: up{job="kafka-connect-jmx"} == 0
+        for: 30s
+        labels: {severity: critical}
+        annotations:
+          summary: Kafka Connect JMX metrics are unavailable
+          description: Debezium connector health cannot be observed.
+      - alert: PostgresDWHDown
+        expr: up{job="postgres-exporter"} == 0
+        for: 30s
+        labels: {severity: critical}
+        annotations:
+          summary: PostgreSQL DWH metrics are unavailable
+          description: The warehouse or its exporter cannot be scraped.

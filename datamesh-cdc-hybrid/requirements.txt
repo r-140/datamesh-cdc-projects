@@ -1,5 +1,6 @@
 confluent-kafka[avro,schema-registry]==2.3.0
 psycopg2-binary==2.9.9
+prometheus-client>=0.20.0
 pytest==7.4.4
 pytest-cov==4.1.0
 pytest-timeout==2.2.0

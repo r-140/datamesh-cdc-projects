@@ -35,6 +35,8 @@ PostgreSQL sources
 | `hybrid-consumer` | Writes lossless Bronze records, audits shapes and applies Silver contracts. |
 | `postgres-dwh` | Contains Bronze, Silver and governance schemas. |
 | dbt | Consumes stable Silver tables for Gold models and governance metadata for schema-evolution visibility. |
+| Prometheus | Scrapes consumer, Kafka Connect JMX and PostgreSQL metrics; evaluates alerts. |
+| Grafana | Visualizes ingestion, projection outcomes, schema shapes and recovery state. |
 
 ## Transaction Boundary
 

@@ -20,7 +20,10 @@ select
         select 1
         from promoted_entities p
         where p.source_table = f.source_table
-          and p.entity_id = (f.payload ->> 'id')::bigint
+          and p.entity_id = case
+              when f.payload ->> 'id' ~ '^-?[0-9]+$'
+              then (f.payload ->> 'id')::bigint
+          end
           and p.bronze_offset > f.kafka_offset
     ) as resolved_by_later_event
 from failures f

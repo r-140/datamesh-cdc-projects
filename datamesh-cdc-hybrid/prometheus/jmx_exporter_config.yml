@@ -1,0 +1,17 @@
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+rules:
+  - pattern: "debezium.postgres<type=connector-metrics, context=streaming, server=(.+)><>TotalNumberOfEventsSeen"
+    name: debezium_events_total
+    labels: {server: "$1"}
+    type: GAUGE
+  - pattern: "debezium.postgres<type=connector-metrics, context=streaming, server=(.+)><>MilliSecondsSinceLastEvent"
+    name: debezium_milliseconds_since_last_event
+    labels: {server: "$1"}
+    type: GAUGE
+  - pattern: "kafka.connect<type=connect-worker-metrics><>task-count"
+    name: kafka_connect_worker_task_count
+    type: GAUGE
+  - pattern: "java.lang<type=Memory><HeapMemoryUsage>used"
+    name: jvm_memory_heap_used_bytes
+    type: GAUGE

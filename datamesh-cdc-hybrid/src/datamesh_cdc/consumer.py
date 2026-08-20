@@ -13,6 +13,7 @@ from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroDeserializer
 
 from .hybrid_projection import ProjectionError, project
+from .metrics import record_event, refresh_governance_metrics, start_metrics_server
 
 logger = logging.getLogger(__name__)
 TOPICS = {"orders-server.public.orders": "orders", "customers-server.public.customers": "customers"}
@@ -100,6 +101,7 @@ def process_message(conn, *, topic, partition, offset, key, payload):
 
 def main():
     logging.basicConfig(level=logging.INFO)
+    start_metrics_server(int(os.getenv("METRICS_PORT", "8000")))
     registry = SchemaRegistryClient(
         {"url": os.getenv("SCHEMA_REGISTRY_URL", "http://schema-registry:8081")}
     )
@@ -114,6 +116,7 @@ def main():
     )
     consumer.subscribe(list(TOPICS))
     conn = psycopg2.connect(os.getenv("DWH_DSN", "postgresql://dwh:dwh@postgres-dwh/datamesh_dwh"))
+    refresh_governance_metrics(conn)
     try:
         while True:
             msg = consumer.poll(1)
@@ -125,7 +128,7 @@ def main():
                 continue
             value = deserialize(msg.value(), None)
             key = deserialize(msg.key(), None) if msg.key() else None
-            process_message(
+            outcome = process_message(
                 conn,
                 topic=msg.topic(),
                 partition=msg.partition(),
@@ -133,6 +136,9 @@ def main():
                 key=key,
                 payload=value,
             )
+            source_table = TOPICS[msg.topic()]
+            record_event(msg.topic(), source_table, outcome)
+            refresh_governance_metrics(conn)
             consumer.commit(msg, asynchronous=False)
     finally:
         consumer.close()

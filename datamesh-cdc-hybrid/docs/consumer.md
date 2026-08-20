@@ -11,6 +11,7 @@
 - Silver projection and upsert;
 - projection quarantine;
 - PostgreSQL and Kafka commit ordering.
+- Prometheus outcome counters and warehouse-backed governance gauges.
 
 It does not evolve Silver DDL automatically.
 
@@ -21,6 +22,7 @@ It does not evolve Silver DDL automatically.
 | `KAFKA_BOOTSTRAP_SERVERS` | `kafka:29092` |
 | `SCHEMA_REGISTRY_URL` | `http://schema-registry:8081` |
 | `DWH_DSN` | `postgresql://dwh:dwh@postgres-dwh/datamesh_dwh` |
+| `METRICS_PORT` | `8000` |
 
 ## Message Outcomes
 
